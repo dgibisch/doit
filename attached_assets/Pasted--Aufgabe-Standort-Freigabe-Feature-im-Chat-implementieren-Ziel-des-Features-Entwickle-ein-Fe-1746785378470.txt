@@ -1,0 +1,660 @@
+# Aufgabe: Standort-Freigabe-Feature im Chat implementieren
+
+## Ziel des Features:
+
+Entwickle ein Feature, das den genauen Standort einer Aufgabe erst dann im Chat anzeigt, wenn beide Parteien (Auftraggeber und Tasker) diesem zugestimmt haben. Zuvor wird nur ein ungefährer Standort (Stadt) und die Entfernung angezeigt.
+
+## Datenbank-Änderungen:
+
+### 1. Aktualisiere das Task-Modell in Firestore:
+
+```javascript
+// In der "tasks"-Collection - Neue Felder hinzufügen
+
+// Existierendes Task-Dokument erweitern
+{
+  // ... bestehende Felder bleiben unverändert ...
+  
+  // Neue Felder für Standortfreigabe
+  "location": {
+    "address": "Musterstraße 123, 12345 Berlin", // Vollständige Adresse
+    "city": "Berlin",                           // Nur Stadt (öffentlich sichtbar)
+    "coordinates": {
+      "lat": 52.520008,
+      "lng": 13.404954
+    },
+    "locationShared": false                     // Wird true, wenn der genaue Standort freigegeben wurde
+  }
+}
+```
+
+### 2. Aktualisiere das Chat-Modell in Firestore:
+
+```javascript
+// In der "chats"-Collection
+
+// Existierendes Chat-Dokument erweitern
+{
+  // ... bestehende Felder ...
+  "taskId": "abc123",
+  "participants": ["userId1", "userId2"],
+  
+  // Neues Feld für Standortfreigabe-Status
+  "locationSharingStatus": {
+    "creatorApproved": false,        // Hat der Ersteller den Standort freigegeben?
+    "taskerApproved": false,         // Hat der Tasker zugestimmt?
+    "sharedAt": null                 // Zeitstempel, wann die Freigabe erfolgt ist
+  }
+}
+
+// In der "chats/{chatId}/messages"-Subcollection - Neue Nachrichtentypen
+
+// Standortfreigabe-Anfrage
+{
+  "type": "location_request",
+  "senderId": "userId1",
+  "timestamp": Timestamp,
+  "content": "Standort freigeben?"
+}
+
+// Standortfreigabe-Antwort
+{
+  "type": "location_response",
+  "senderId": "userId2",
+  "timestamp": Timestamp,
+  "approved": true,                 // true oder false
+  "content": "Standort freigegeben"
+}
+
+// Standortfreigabe-Nachricht (automatisch generiert)
+{
+  "type": "location_shared",
+  "senderId": "system",
+  "timestamp": Timestamp,
+  "taskId": "abc123",
+  "location": {
+    "address": "Musterstraße 123, 12345 Berlin",
+    "coordinates": {
+      "lat": 52.520008,
+      "lng": 13.404954
+    }
+  }
+}
+```
+
+## Code-Implementierung:
+
+### 1. Backend-Funktionen zum Aktualisieren des Standortfreigabestatus:
+
+Füge diese Funktionen in `firebase.ts` oder einer ähnlichen Datei hinzu:
+
+```typescript
+/**
+ * Anfrage zum Freigeben des Standorts senden
+ * @param chatId Die Chat-ID
+ * @param userId Die Benutzer-ID des Anfragenden
+ * @returns ID der erstellten Nachricht
+ */
+export const requestLocationSharing = async (chatId: string, userId: string): Promise<string> => {
+  try {
+    // Chat überprüfen
+    const chatRef = doc(db, "chats", chatId);
+    const chatSnap = await getDoc(chatRef);
+    
+    if (!chatSnap.exists()) {
+      throw new Error("Chat nicht gefunden");
+    }
+    
+    const chatData = chatSnap.data();
+    
+    // Prüfen, ob der Benutzer ein Teilnehmer ist
+    if (!chatData.participants.includes(userId)) {
+      throw new Error("Unbefugter Zugriff auf diesen Chat");
+    }
+    
+    // Nachricht über die Anfrage hinzufügen
+    const messagesRef = collection(db, `chats/${chatId}/messages`);
+    const messageDoc = await addDoc(messagesRef, {
+      type: "location_request",
+      senderId: userId,
+      timestamp: serverTimestamp(),
+      content: "Hat eine Anfrage zur Standortfreigabe gesendet"
+    });
+    
+    // Chat aktualisieren
+    await updateDoc(chatRef, {
+      lastMessage: "Standortfreigabe angefragt",
+      lastMessageAt: serverTimestamp()
+    });
+    
+    return messageDoc.id;
+  } catch (error) {
+    console.error("Fehler beim Anfragen der Standortfreigabe:", error);
+    throw error;
+  }
+};
+
+/**
+ * Auf Standortfreigabe-Anfrage antworten
+ * @param chatId Die Chat-ID
+ * @param userId Die Benutzer-ID des Antwortenden
+ * @param approved Zustimmung (true) oder Ablehnung (false)
+ * @param taskId Die Aufgaben-ID
+ * @returns true wenn der Standort freigegeben wurde, false wenn nicht
+ */
+export const respondToLocationRequest = async (
+  chatId: string, 
+  userId: string, 
+  approved: boolean,
+  taskId: string
+): Promise<boolean> => {
+  try {
+    // Chat und Benutzerrolle überprüfen
+    const chatRef = doc(db, "chats", chatId);
+    const chatSnap = await getDoc(chatRef);
+    
+    if (!chatSnap.exists()) {
+      throw new Error("Chat nicht gefunden");
+    }
+    
+    const chatData = chatSnap.data();
+    
+    // Prüfen, ob der Benutzer ein Teilnehmer ist
+    if (!chatData.participants.includes(userId)) {
+      throw new Error("Unbefugter Zugriff auf diesen Chat");
+    }
+    
+    // Task abrufen
+    const taskRef = doc(db, "tasks", taskId);
+    const taskSnap = await getDoc(taskRef);
+    
+    if (!taskSnap.exists()) {
+      throw new Error("Aufgabe nicht gefunden");
+    }
+    
+    const taskData = taskSnap.data();
+    
+    // Bestimmen, ob Benutzer der Ersteller oder Tasker ist
+    const isCreator = taskData.creatorId === userId;
+    const isTasker = taskData.taskerId === userId;
+    
+    if (!isCreator && !isTasker) {
+      throw new Error("Benutzer ist weder Ersteller noch Ausführender der Aufgabe");
+    }
+    
+    // Antwort-Nachricht hinzufügen
+    const messagesRef = collection(db, `chats/${chatId}/messages`);
+    await addDoc(messagesRef, {
+      type: "location_response",
+      senderId: userId,
+      timestamp: serverTimestamp(),
+      approved: approved,
+      content: approved ? "Hat der Standortfreigabe zugestimmt" : "Hat die Standortfreigabe abgelehnt"
+    });
+    
+    // Lokalen chat.locationSharingStatus erstellen, falls nicht vorhanden
+    const locationSharingStatus = chatData.locationSharingStatus || {
+      creatorApproved: false,
+      taskerApproved: false,
+      sharedAt: null
+    };
+    
+    // Status aktualisieren
+    if (isCreator) {
+      locationSharingStatus.creatorApproved = approved;
+    } else if (isTasker) {
+      locationSharingStatus.taskerApproved = approved;
+    }
+    
+    // Chat-Dokument aktualisieren
+    await updateDoc(chatRef, {
+      locationSharingStatus: locationSharingStatus,
+      lastMessage: approved ? "Standortfreigabe zugestimmt" : "Standortfreigabe abgelehnt",
+      lastMessageAt: serverTimestamp()
+    });
+    
+    // Wenn beide zugestimmt haben, standort freigeben
+    const bothApproved = locationSharingStatus.creatorApproved && locationSharingStatus.taskerApproved;
+    
+    if (bothApproved && !chatData.locationSharingStatus?.sharedAt) {
+      // Automatische Systembenachrichtigung erstellen
+      await addDoc(messagesRef, {
+        type: "location_shared",
+        senderId: "system",
+        timestamp: serverTimestamp(),
+        taskId: taskId,
+        location: taskData.location
+      });
+      
+      // Standortfreigabe in Chat und Task aktualisieren
+      await updateDoc(chatRef, {
+        "locationSharingStatus.sharedAt": serverTimestamp(),
+        lastMessage: "🗺️ Standort wurde freigegeben",
+        lastMessageAt: serverTimestamp()
+      });
+      
+      // Task aktualisieren
+      await updateDoc(taskRef, {
+        "location.locationShared": true
+      });
+      
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error("Fehler beim Beantworten der Standortfreigabe:", error);
+    throw error;
+  }
+};
+
+/**
+ * Prüft, ob der genaue Standort für einen Chat freigegeben wurde
+ */
+export const isLocationSharedInChat = async (chatId: string): Promise<boolean> => {
+  try {
+    const chatRef = doc(db, "chats", chatId);
+    const chatSnap = await getDoc(chatRef);
+    
+    if (!chatSnap.exists()) {
+      return false;
+    }
+    
+    const chatData = chatSnap.data();
+    return !!(chatData.locationSharingStatus?.sharedAt);
+  } catch (error) {
+    console.error("Fehler beim Prüfen des Standortfreigabestatus:", error);
+    return false;
+  }
+};
+```
+
+### 2. UI-Komponenten für das Chat-Feature:
+
+#### 2.1 Standortfreigabe-Button in der Chat-Komponente:
+
+Füge diesen Code zu deiner `ChatView` oder `ChatPage` Komponente hinzu:
+
+```tsx
+// In components/chat/ChatView.tsx oder ähnlich
+
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import { 
+  getMessages, 
+  sendMessage, 
+  requestLocationSharing, 
+  respondToLocationRequest,
+  isLocationSharedInChat
+} from '@/lib/firebase';
+import { Button } from '@/components/ui/button';
+import { MapPin, Check, X } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+
+export default function ChatView({ chatId, taskId, taskData }) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [locationShared, setLocationShared] = useState(false);
+  const [loading, setLoading] = useState(false);
+  
+  // Prüfen, ob der Standort bereits freigegeben wurde
+  useEffect(() => {
+    const checkLocationStatus = async () => {
+      if (chatId && taskId) {
+        const shared = await isLocationSharedInChat(chatId);
+        setLocationShared(shared);
+      }
+    };
+    
+    checkLocationStatus();
+  }, [chatId, taskId]);
+  
+  // Funktion zum Anfordern der Standortfreigabe
+  const handleRequestLocation = async () => {
+    if (!user || !chatId) return;
+    
+    try {
+      setLoading(true);
+      await requestLocationSharing(chatId, user.uid);
+      toast({
+        title: "Anfrage gesendet",
+        description: "Standortfreigabe wurde angefragt"
+      });
+    } catch (error) {
+      console.error("Fehler bei der Standortanfrage:", error);
+      toast({
+        title: "Fehler",
+        description: "Die Anfrage konnte nicht gesendet werden",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Funktion zum Beantworten einer Standortanfrage
+  const handleRespondToLocation = async (approved) => {
+    if (!user || !chatId || !taskId) return;
+    
+    try {
+      setLoading(true);
+      const shared = await respondToLocationRequest(chatId, user.uid, approved, taskId);
+      
+      if (shared) {
+        setLocationShared(true);
+        toast({
+          title: "Standort freigegeben",
+          description: "Der genaue Standort wurde für beide Parteien freigegeben"
+        });
+      } else {
+        toast({
+          title: approved ? "Zugestimmt" : "Abgelehnt",
+          description: approved 
+            ? "Du hast der Standortfreigabe zugestimmt" 
+            : "Du hast die Standortfreigabe abgelehnt"
+        });
+      }
+    } catch (error) {
+      console.error("Fehler bei der Standortantwort:", error);
+      toast({
+        title: "Fehler",
+        description: "Die Antwort konnte nicht gesendet werden",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Rendere Nachrichten basierend auf ihrem Typ
+  const renderMessage = (message) => {
+    switch (message.type) {
+      case "location_request":
+        return (
+          <div className="bg-yellow-50 rounded-lg p-3 my-2 mx-12 text-center">
+            <p className="text-sm text-yellow-700">
+              {message.senderId === user.uid 
+                ? "Du hast eine Standortfreigabe angefragt" 
+                : "Der andere Nutzer möchte den genauen Standort freigeben"}
+            </p>
+            
+            {message.senderId !== user.uid && (
+              <div className="flex justify-center space-x-2 mt-2">
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="bg-green-50 hover:bg-green-100 text-green-600"
+                  onClick={() => handleRespondToLocation(true)}
+                  disabled={loading}
+                >
+                  <Check className="h-4 w-4 mr-1" />
+                  Zustimmen
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="bg-red-50 hover:bg-red-100 text-red-600"
+                  onClick={() => handleRespondToLocation(false)}
+                  disabled={loading}
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  Ablehnen
+                </Button>
+              </div>
+            )}
+          </div>
+        );
+        
+      case "location_response":
+        return (
+          <div className={`bg-gray-50 rounded-lg p-3 my-2 mx-12 text-center`}>
+            <p className="text-sm text-gray-700">
+              {message.senderId === user.uid 
+                ? `Du hast ${message.approved ? 'zugestimmt' : 'abgelehnt'}` 
+                : `Der andere Nutzer hat ${message.approved ? 'zugestimmt' : 'abgelehnt'}`}
+            </p>
+          </div>
+        );
+        
+      case "location_shared":
+        return (
+          <div className="bg-green-50 rounded-lg p-3 my-2 text-center">
+            <p className="text-sm text-green-700 font-medium mb-2">
+              🎉 Der genaue Standort wurde freigegeben
+            </p>
+            
+            <div className="border rounded-lg overflow-hidden">
+              <div className="p-3 bg-white">
+                <p className="font-medium text-gray-800">{message.location.address}</p>
+                <div className="mt-2">
+                  <a 
+                    href={`https://maps.google.com/?q=${message.location.coordinates.lat},${message.location.coordinates.lng}`} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 text-sm flex items-center justify-center"
+                  >
+                    <MapPin className="h-4 w-4 mr-1" />
+                    In Google Maps öffnen
+                  </a>
+                </div>
+              </div>
+              {/* Optional: Hier könnte eine kleine Kartenvorschau eingefügt werden */}
+            </div>
+          </div>
+        );
+        
+      default:
+        // Normale Textnachricht
+        return (
+          <div className={`${
+            message.senderId === user.uid 
+              ? 'bg-indigo-100 ml-12' 
+              : 'bg-gray-100 mr-12'
+          } rounded-lg p-3 my-2`}>
+            <p className="text-gray-800">{message.content}</p>
+            <p className="text-xs text-gray-500 text-right mt-1">
+              {message.timestamp ? new Date(message.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+            </p>
+          </div>
+        );
+    }
+  };
+  
+  // Rest der Chat-Komponente (Nachrichten senden, anzeigen, etc.)
+  
+  return (
+    <div className="flex flex-col h-full">
+      {/* Chat-Header */}
+      <div className="bg-white border-b p-4 flex justify-between items-center">
+        <div>
+          <h2 className="font-bold">{taskData?.title || 'Chat'}</h2>
+          <p className="text-sm text-gray-500">
+            {locationShared 
+              ? 'Standort: Freigegeben' 
+              : `Standort: ${taskData?.location?.city || 'Nicht verfügbar'}`}
+          </p>
+        </div>
+        
+        {!locationShared && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRequestLocation}
+            disabled={loading}
+          >
+            <MapPin className="h-4 w-4 mr-2" />
+            Standort freigeben
+          </Button>
+        )}
+      </div>
+      
+      {/* Nachrichtenliste */}
+      <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
+        {messages.map((msg) => (
+          <div key={msg.id}>
+            {renderMessage(msg)}
+          </div>
+        ))}
+      </div>
+      
+      {/* Eingabefeld für neue Nachrichten */}
+      {/* ... (bestehender Code für die Nachrichteneingabe) ... */}
+    </div>
+  );
+}
+```
+
+#### 2.2 Standortanzeige in der Aufgabendetailseite aktualisieren:
+
+```tsx
+// In components/tasks/TaskDetail.tsx oder ähnlich
+
+// Standortanzeige basierend auf dem Freigabestatus
+const renderLocation = () => {
+  const userIsParticipant = task.creatorId === user?.uid || task.taskerId === user?.uid;
+  
+  if (task.location?.locationShared && userIsParticipant) {
+    // Vollständiger Standort für Teilnehmer, wenn freigegeben
+    return (
+      <div className="border rounded-lg p-3 bg-white shadow-sm">
+        <div className="flex items-start">
+          <MapPin className="h-5 w-5 text-indigo-600 mt-0.5 mr-2 flex-shrink-0" />
+          <div>
+            <p className="font-medium">{task.location.address}</p>
+            <a 
+              href={`https://maps.google.com/?q=${task.location.coordinates.lat},${task.location.coordinates.lng}`} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 text-sm inline-flex items-center mt-1"
+            >
+              In Google Maps öffnen
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  } else {
+    // Nur Stadt und Entfernung für alle anderen
+    return (
+      <div className="flex items-center">
+        <MapPin className="h-5 w-5 text-indigo-600 mr-2 flex-shrink-0" />
+        <div>
+          <p className="font-medium">{task.location?.city || 'Standort nicht verfügbar'}</p>
+          {calculateDistance && (
+            <p className="text-sm text-gray-500">
+              {calculateDistance(task.location?.coordinates) || 'Entfernung unbekannt'}
+            </p>
+          )}
+          {userIsParticipant && !task.location?.locationShared && (
+            <p className="text-xs text-gray-500 mt-1">
+              Der genaue Standort wird nach gegenseitiger Zustimmung im Chat freigegeben
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+};
+```
+
+### 3. Änderungen an bestehenden Komponenten:
+
+#### 3.1. Anpassung der TaskForm für die Standorterfassung:
+
+```tsx
+// In components/tasks/TaskForm.tsx
+
+// Adressfeld um Stadt extrahieren
+const handleAddressSelect = (address, lat, lng) => {
+  // Extrahiere die Stadt aus der Adresse
+  const addressParts = address.split(',');
+  let city = '';
+  
+  if (addressParts.length >= 2) {
+    // Versuche, die Stadt aus der Adresse zu extrahieren
+    // Oft ist die Stadt der zweite Teil (nach Straße)
+    city = addressParts[1].trim();
+    
+    // Alternativ: Verwende Regex, um Postleitzahl + Stadt zu finden
+    const cityMatch = address.match(/\d{5}\s+([^,]+)/);
+    if (cityMatch && cityMatch[1]) {
+      city = cityMatch[1].trim();
+    }
+  }
+  
+  setFormData({
+    ...formData,
+    location: {
+      address,
+      city,
+      coordinates: { lat, lng },
+      locationShared: false
+    }
+  });
+};
+```
+
+#### 3.2. Anpassung der TaskCard für die Standortanzeige:
+
+```tsx
+// In components/tasks/TaskCard.tsx
+
+// Standortanzeige in der TaskCard
+<div className="flex items-center mt-2">
+  <MapPin className="h-4 w-4 text-gray-500 mr-1" />
+  <span className="text-sm text-gray-500">
+    {task.location?.city || 'Standort nicht verfügbar'}
+    {userLocation && task.location?.coordinates && (
+      <span className="ml-1">
+        ({calculateDistance(userLocation, task.location.coordinates)})
+      </span>
+    )}
+  </span>
+</div>
+```
+
+## Zusätzliche Hinweise für Replit:
+
+1. **Firestore-Regeln aktualisieren**:
+   Stelle sicher, dass die Firestore-Regeln die neuen Felder und Operationen erlauben:
+
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       // Erlaubt Lesen/Schreiben für authentifizierte Benutzer
+       match /chats/{chatId} {
+         allow read: if request.auth != null && request.auth.uid in resource.data.participants;
+         allow update: if request.auth != null && request.auth.uid in resource.data.participants;
+         
+         // Nachrichten in Chats
+         match /messages/{messageId} {
+           allow read: if request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+           allow create: if request.auth != null && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+         }
+       }
+       
+       match /tasks/{taskId} {
+         // Standort-Freigabe nur erlauben, wenn der Benutzer beteiligt ist
+         allow update: if request.auth != null && 
+                        (resource.data.creatorId == request.auth.uid || resource.data.taskerId == request.auth.uid) &&
+                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['location.locationShared']));
+       }
+     }
+   }
+   ```
+
+2. **Reihenfolge der Implementierung**:
+   1. Implementiere zuerst die Datenbank-Änderungen
+   2. Füge dann die Backend-Funktionen hinzu
+   3. Passe die UI-Komponenten an
+   4. Teste das Feature gründlich
+
+3. **Testing**:
+   - Überprüfe, ob der Standort korrekt verborgen wird
+   - Teste den Chat-Prozess für die Anfrage und Zustimmung
+   - Überprüfe, ob der Standort korrekt angezeigt wird, nachdem beide zugestimmt haben
+
+Diese Implementierung bietet eine robuste Lösung für dein Standortfreigabe-Feature im Chat und ist bereit für die Entwicklung in Replit.

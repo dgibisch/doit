@@ -1,0 +1,96 @@
+❌ Aktueller Fehler:
+Der Upload von Profilbildern erfolgt aktuell über folgenden problematischen Weg:
+
+canvas.toDataURL(...) erzeugt ein Base64-String,
+
+dieser wird dann in Firestore gespeichert oder weiterverarbeitet,
+
+das führt zu:
+
+extrem großen Datenmengen (Base64 ist ~33 % größer),
+
+langen Ladezeiten,
+
+Speichern-Fehlern („zu lange gedauert“ / „save failed“),
+
+Firestore-Dokumente erreichen die 1MB-Grenze,
+
+schlechter Performance im Frontend.
+
+✅ Ziel:
+Bitte entferne vollständig den bisherigen base64-Ansatz und ersetze ihn durch echten Datei-Upload zu Firebase Storage, wie es bei Medieninhalten vorgesehen ist. Danach wird nur die Download-URL in Firestore gespeichert.
+
+✅ Lösungsschritte:
+1. 🔄 In firebase.ts: Neue Upload-Funktion einfügen
+ts
+Kopieren
+Bearbeiten
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
+export const uploadUserAvatar = async (file: File, userId: string): Promise<string> => {
+  const storage = getStorage();
+  const avatarRef = ref(storage, `avatars/${userId}-${Date.now()}-${file.name}`);
+  const snapshot = await uploadBytes(avatarRef, file);
+  const downloadURL = await getDownloadURL(snapshot.ref);
+  return downloadURL;
+};
+2. 📦 Optional: Bild vor dem Upload komprimieren
+ts
+Kopieren
+Bearbeiten
+import imageCompression from "browser-image-compression";
+
+const compressImage = async (file: File): Promise<File> => {
+  return await imageCompression(file, {
+    maxSizeMB: 0.5,
+    maxWidthOrHeight: 600,
+    useWebWorker: true,
+  });
+};
+3. 🧠 In ProfileScreen.tsx und InitialSetupModal.tsx:
+ts
+Kopieren
+Bearbeiten
+let finalAvatarUrl = currentUser.avatarUrl;
+
+if (selectedFile) {
+  const compressed = await compressImage(selectedFile);
+  finalAvatarUrl = await uploadUserAvatar(compressed, currentUser.uid);
+}
+
+await updateUserProfile(currentUser.uid, {
+  avatarUrl: finalAvatarUrl,
+  username,
+  location,
+});
+⛔ Wichtig:
+Bitte entferne alle Vorkommen von:
+
+canvas.toDataURL(...),
+
+reader.readAsDataURL(...),
+
+Base64-Strings in Firestore (oder in User-Dokumenten).
+
+📄 Firebase Storage Rules (nicht vergessen!):
+In Storage > Regeln:
+
+js
+Kopieren
+Bearbeiten
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /avatars/{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+✅ Vorteile:
+Kein 1MB-Limit mehr
+
+Schnellere Uploads
+
+Zukunftssicher für App Store
+
+Viel bessere Performance

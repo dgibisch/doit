@@ -1,0 +1,767 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { format } from 'date-fns';
+import { useAuth } from '@/context/AuthContext';
+import { useChat } from '@/hooks/use-chat';
+import { uploadChatImage } from '@/lib/firebase';
+import { useToast } from '@/hooks/use-toast';
+import { useReview } from '@/context/ReviewContext';
+import { type ChatMessage, type Chat } from '@/lib/chat-service';
+import { reviewService } from '@/lib/review-service';
+import ZoomableImage from '@/components/ui/zoomable-image';
+
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import UserAvatar from '@/components/ui/user-avatar';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { AlertCircle, ArrowLeft, ImageIcon, Send, X, CheckCheck, Check, UserCheck, CheckCircle2, CircleCheck, Star } from 'lucide-react';
+import { 
+  Alert, 
+  AlertTitle, 
+  AlertDescription 
+} from '@/components/ui/alert';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+
+/**
+ * Message status component showing sending, sent, delivered or read status
+ */
+const MessageStatus = ({ status }: { status: ChatMessage['status'] }) => {
+  if (status === 'sending') {
+    return (
+      <span className="text-gray-400 text-xs ml-1 inline-flex items-center">
+        <svg className="animate-spin -ml-1 mr-1 h-2 w-2 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        Wird gesendet
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <span className="text-red-500 text-xs ml-1">
+        <AlertCircle className="h-3 w-3 inline mr-1" />
+        Fehler
+      </span>
+    );
+  }
+  if (status === 'sent') {
+    return (
+      <span className="text-gray-400">
+        <Check className="h-3 w-3 inline" />
+      </span>
+    );
+  }
+  if (status === 'delivered') {
+    return (
+      <span className="text-gray-400">
+        <CheckCheck className="h-3 w-3 inline" />
+      </span>
+    );
+  }
+  if (status === 'read') {
+    return (
+      <span className="text-blue-500">
+        <CheckCheck className="h-3 w-3 inline" />
+      </span>
+    );
+  }
+  return null;
+};
+
+/**
+ * Einzelne Nachrichtenkomponente
+ */
+const ChatMessageItem = ({ 
+  message, 
+  isOwnMessage
+}: { 
+  message: ChatMessage; 
+  isOwnMessage: boolean;
+}) => {
+  // Format timestamp
+  let messageTime = '';
+  try {
+    if (message.timestamp) {
+      const date = typeof message.timestamp.toDate === 'function'
+        ? message.timestamp.toDate()
+        : new Date(message.timestamp as any);
+      messageTime = format(date, 'HH:mm');
+    }
+  } catch (err) {
+    console.error('Error formatting timestamp:', err);
+  }
+  
+  // System-Nachricht
+  if (message.isSystemMessage) {
+    return (
+      <div className="mb-4 flex justify-center">
+        <div className="bg-gray-100 text-gray-600 px-4 py-2 rounded-full text-sm font-medium max-w-[90%] text-center">
+          {message.content}
+          <div className="text-[10px] mt-1 text-gray-500">
+            {messageTime}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  // Normale Nachricht
+  return (
+    <div 
+      className={`mb-3 flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
+    >
+      {!isOwnMessage && (
+        <UserAvatar 
+          user={{
+            uid: message.senderId || '',
+            photoURL: message.senderAvatar || '',
+            displayName: message.senderName || ''
+          }}
+          size={32}
+          className="mr-2 mt-1 flex-shrink-0"
+        />
+      )}
+      
+      <div 
+        className={`
+          relative max-w-[75%] px-3 py-2 shadow-sm
+          ${isOwnMessage 
+            ? 'bg-indigo-500 text-white rounded-tl-2xl rounded-bl-2xl rounded-tr-2xl' 
+            : 'bg-white text-gray-800 rounded-tr-2xl rounded-br-2xl rounded-tl-2xl'
+          }
+        `}
+      >
+        {/* Display message content */}
+        {message.content && (
+          <p className="text-[15px] leading-[20px] whitespace-pre-wrap break-words mb-4">
+            {message.content}
+          </p>
+        )}
+        
+        {/* Display message image if available */}
+        {message.imageUrl && (
+          <div className="mt-1 mb-4">
+            <ZoomableImage 
+              src={message.imageUrl} 
+              alt="Bild zur Nachricht" 
+              maxHeight={240}
+              objectFit="contain"
+              containerClassName="bg-transparent"
+            />
+          </div>
+        )}
+        
+        {/* Timestamp unten rechts in der Bubble - besser positioniert */}
+        <div className={`
+          text-[10px] font-light absolute bottom-1 right-2.5 flex items-center space-x-1
+          ${isOwnMessage ? 'text-white text-opacity-70' : 'text-gray-500'}
+        `}>
+          <span>{messageTime}</span>
+          {isOwnMessage && <MessageStatus status={message.status} />}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Moderner Chat-View mit fixiertem Eingabefeld und Keyboard-Unterstützung
+ */
+interface ModernChatViewProps {
+  chatId: string;
+  onBack: () => void;
+}
+
+const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
+  const { user, userProfile } = useAuth();
+  const { 
+    chat, 
+    messages, 
+    loading, 
+    error, 
+    sending, 
+    sendMessage,
+    selectApplicant,
+    rejectApplicant,
+    confirmSelection,
+    markTaskCompleted
+  } = useChat(chatId);
+  const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+  const { openReviewModal } = useReview();
+  
+  // Zustand für ausgewähltes Bild
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Zustand für Bewertungsstatus
+  const [hasReviewed, setHasReviewed] = useState<boolean>(false);
+  const [checkingReviewStatus, setCheckingReviewStatus] = useState<boolean>(false);
+  
+  // Chat-Container Ref für Scroll-Position
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Automatisches Scrollen zu neuesten Nachrichten
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+  
+  // Überprüfen, ob der aktuelle Nutzer bereits eine Bewertung abgegeben hat
+  useEffect(() => {
+    const checkReviewStatus = async () => {
+      if (!user?.id || !chat?.taskId) return;
+      
+      try {
+        setCheckingReviewStatus(true);
+        const hasUserReviewed = await reviewService.hasUserReviewedTask(chat.taskId, user.id);
+        setHasReviewed(hasUserReviewed);
+      } catch (error) {
+        console.error("Fehler beim Prüfen des Bewertungsstatus:", error);
+      } finally {
+        setCheckingReviewStatus(false);
+      }
+    };
+    
+    if (chat?.isCompletedConfirmed) {
+      checkReviewStatus();
+    }
+  }, [user?.id, chat?.taskId, chat?.isCompletedConfirmed]);
+  
+  // Holen des Review-Kontext für Event-Listener
+  const reviewContext = useReview();
+  
+  // Callback mit useCallback memoizieren
+  const handleReviewSubmitted = useCallback((taskId: string, reviewerId: string) => {
+    // Wenn der aktuelle Chat und Nutzer betroffen sind
+    if (taskId === chat?.taskId && reviewerId === user?.id) {
+      setHasReviewed(true);
+    }
+  }, [chat?.taskId, user?.id]);
+  
+  // Auf ReviewSubmitted-Events hören
+  useEffect(() => {
+    // Event-Listener registrieren
+    const unsubscribe = reviewContext.onReviewSubmitted(handleReviewSubmitted);
+    
+    // Cleanup beim Unmount
+    return unsubscribe;
+  }, [reviewContext, handleReviewSubmitted]);
+  
+  // Keyboard-Handling
+  useEffect(() => {
+    const handleVisualViewportResize = () => {
+      if (window.visualViewport) {
+        const keyboardHeight = window.innerHeight - window.visualViewport.height;
+        
+        // Anpassen der Eingabeposition wenn Tastatur offen ist
+        if (keyboardHeight > 100) {
+          const formElement = document.querySelector('.modern-chat-input');
+          if (formElement && formElement instanceof HTMLElement) {
+            formElement.style.transform = `translateY(-${keyboardHeight}px)`;
+          }
+          
+          // Nach unten scrollen
+          setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }, 50);
+        } else {
+          const formElement = document.querySelector('.modern-chat-input');
+          if (formElement && formElement instanceof HTMLElement) {
+            formElement.style.transform = 'translateY(0)';
+          }
+        }
+      }
+    };
+    
+    // Event-Listener für Tastatur
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleVisualViewportResize);
+      window.visualViewport.addEventListener('scroll', handleVisualViewportResize);
+    }
+    
+    // Event-Listener für Eingabefeld-Fokus
+    const handleFocus = () => {
+      setTimeout(() => {
+        handleVisualViewportResize();
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+    };
+    
+    inputRef.current?.addEventListener('focus', handleFocus);
+    
+    // Cleanup
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleVisualViewportResize);
+        window.visualViewport.removeEventListener('scroll', handleVisualViewportResize);
+      }
+      
+      inputRef.current?.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+  
+  // Bild auswählen
+  const handleImageSelect = () => {
+    fileInputRef.current?.click();
+  };
+  
+  // Datei-Change-Handler
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    // Validieren der Datei
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: 'Fehlerhafter Dateityp',
+        description: 'Bitte wählen Sie eine Bilddatei aus.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    // Maximale Dateigröße prüfen (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: 'Datei zu groß',
+        description: 'Die maximale Dateigröße beträgt 5MB.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setSelectedImage(file);
+  };
+  
+  // Bild entfernen
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    // Input-Feld zurücksetzen
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+  
+  // Nachricht senden
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if ((!newMessage.trim() && !selectedImage) || sending || uploadingImage) return;
+    
+    try {
+      // Wenn ein Bild ausgewählt wurde, dieses zuerst hochladen
+      let imageUrl: string | undefined;
+      
+      if (selectedImage) {
+        setUploadingImage(true);
+        try {
+          imageUrl = await uploadChatImage(selectedImage, chatId);
+        } catch (uploadError) {
+          console.error('Error uploading image:', uploadError);
+          toast({
+            title: 'Fehler beim Hochladen des Bildes',
+            description: 'Das Bild konnte nicht hochgeladen werden. Bitte versuchen Sie es später erneut.',
+            variant: 'destructive',
+          });
+          setUploadingImage(false);
+          return;
+        } finally {
+          setUploadingImage(false);
+        }
+      }
+      
+      // Nachricht senden
+      await sendMessage(newMessage.trim(), imageUrl);
+      
+      // Zurücksetzen der Eingabe
+      setNewMessage('');
+      setSelectedImage(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (err) {
+      console.error('Error in handleSendMessage:', err);
+    }
+  };
+  
+  // Laden-Zustand
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+  
+  // Fehler-Zustand
+  if (error) {
+    return (
+      <div className="p-4">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Fehler beim Laden des Chats</AlertTitle>
+          <AlertDescription>
+            {error.message}
+          </AlertDescription>
+        </Alert>
+        
+        <Button 
+          onClick={onBack}
+          className="mt-4"
+          variant="outline"
+        >
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Zurück zur Übersicht
+        </Button>
+      </div>
+    );
+  }
+  
+  // Daten für andere Teilnehmer abrufen
+  const otherParticipantId = chat?.participants.find(id => id !== user?.id) || '';
+  
+  // Hilfsfunktion für Bewerbungs-Chat
+  const isApplicationChat = chat?.isTaskApplicationChat || false;
+  const isTaskCreator = chat?.taskCreatorId === user?.id;
+  const isApplicant = chat?.applicantId === user?.id;
+  const isSelected = chat?.isSelected || false;
+  const isRejected = chat?.isRejected || false;
+  const isConfirmedByApplicant = chat?.isConfirmedByApplicant || false;
+  
+  return (
+    <div className="h-full flex flex-col bg-gray-50 modern-chat">
+      {/* Chat-Header */}
+      <div className="sticky top-0 z-10 bg-white border-b shadow-sm px-4 py-2">
+        <div className="flex items-center">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="mr-2 -ml-2" 
+            onClick={onBack}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          
+          <div className="flex items-center">
+            <div className="mr-3">
+              <UserAvatar 
+                user={{
+                  displayName: chat?.participantNames?.[otherParticipantId] || 'Benutzer',
+                  avatarBase64: chat?.participantAvatarBase64?.[otherParticipantId],
+                  avatarUrl: chat?.participantAvatarUrls?.[otherParticipantId] || chat?.participantAvatars?.[otherParticipantId],
+                  uid: otherParticipantId
+                }}
+                size={32}
+              />
+            </div>
+            
+            <div>
+              <h2 className="text-sm font-medium">
+                {chat?.participantNames?.[otherParticipantId] || 'Benutzer'}
+              </h2>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {chat?.taskTitle || 'Chat'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Bewerbungs-Aktionen (falls zutreffend) */}
+      {isApplicationChat && (
+        <div className="px-4 py-3 border-b">
+          <Card className="shadow-sm">
+            <CardHeader className="py-3">
+              <CardTitle className="text-base flex items-center">
+                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center mr-2 text-indigo-600">
+                  <UserCheck className="h-4 w-4" />
+                </div>
+                Bewerbung: {chat?.taskTitle}
+              </CardTitle>
+              <CardDescription className="text-xs">
+                {isTaskCreator ? 
+                  `Bewerbung von ${chat?.participantNames?.[chat?.applicantId || ''] || 'Bewerber'}` : 
+                  `Ihre Bewerbung an ${chat?.participantNames?.[chat?.taskCreatorId || ''] || 'Auftraggeber'}`}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pb-3 pt-0">
+              {/* Aktionen für den Task-Ersteller */}
+              {isTaskCreator && !isSelected && !isRejected && (
+                <div className="flex gap-2">
+                  <Button 
+                    onClick={selectApplicant}
+                    className="flex-1 bg-indigo-500 hover:bg-indigo-600 text-white"
+                  >
+                    <UserCheck className="h-4 w-4 mr-2" />
+                    Auswählen
+                  </Button>
+                  <Button 
+                    onClick={rejectApplicant}
+                    className="flex-1 bg-red-500 hover:bg-red-600 text-white"
+                  >
+                    <X className="h-4 w-4 mr-2" />
+                    Ablehnen
+                  </Button>
+                </div>
+              )}
+              
+              {/* Anzeige für abgelehnten Status */}
+              {isRejected && (
+                <div className="bg-red-50 p-3 rounded-md border border-red-200 mb-3">
+                  <p className="text-sm text-red-800 flex items-center">
+                    <X className="h-4 w-4 mr-2 text-red-500" />
+                    {isTaskCreator ? 
+                      "Sie haben diesen Bewerber abgelehnt." : 
+                      "Ihre Bewerbung wurde abgelehnt."}
+                  </p>
+                </div>
+              )}
+              
+              {/* Anzeige für den Task-Ersteller wenn ausgewählt aber nicht bestätigt */}
+              {isTaskCreator && isSelected && !isConfirmedByApplicant && (
+                <div className="bg-yellow-50 p-3 rounded-md border border-yellow-200 mb-3">
+                  <p className="text-sm text-yellow-800 flex items-center">
+                    <CheckCircle2 className="h-4 w-4 mr-2 text-yellow-500" />
+                    Sie haben diesen Bewerber ausgewählt. Warten auf Bestätigung.
+                  </p>
+                </div>
+              )}
+              
+              {/* Aktionen für den Bewerber */}
+              {isApplicant && isSelected && !isConfirmedByApplicant && (
+                <div className="space-y-3">
+                  <div className="bg-green-50 p-3 rounded-md border border-green-200">
+                    <p className="text-sm text-green-800 font-medium">
+                      Sie wurden für diese Aufgabe ausgewählt!
+                    </p>
+                  </div>
+                  <Button 
+                    onClick={confirmSelection}
+                    className="w-full bg-green-500 hover:bg-green-600"
+                  >
+                    <Check className="h-4 w-4 mr-2" />
+                    Auswahl bestätigen
+                  </Button>
+                </div>
+              )}
+              
+              {/* Task Abschluss (für beide, wenn bestätigt) */}
+              {isSelected && isConfirmedByApplicant && (
+                <div className="space-y-3">
+                  <div className="bg-blue-50 p-3 rounded-md border border-blue-200">
+                    <p className="text-sm text-blue-800 flex items-center">
+                      <CheckCheck className="h-4 w-4 mr-2 text-blue-500" />
+                      {isTaskCreator ? 
+                        "Der Bewerber hat die Auswahl bestätigt und arbeitet an der Aufgabe." : 
+                        "Sie haben die Auswahl bestätigt und arbeiten an der Aufgabe."}
+                    </p>
+                  </div>
+                  
+                  {/* Button-Status je nach Chat-Status anzeigen */}
+                  {chat?.isCompletedConfirmed ? (
+                    <div className="bg-green-50 p-3 rounded-md border border-green-200">
+                      <p className="text-sm text-green-800 flex items-center">
+                        <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
+                        Der Auftrag wurde als abgeschlossen markiert.
+                      </p>
+                      
+                      {/* Bewertungs-Button oder Bewertungsstatus anzeigen */}
+                      {checkingReviewStatus ? (
+                        <div className="flex justify-center items-center mt-3 py-2">
+                          <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mr-2"></div>
+                          <span className="text-sm text-gray-500">Bewertungsstatus wird geprüft...</span>
+                        </div>
+                      ) : hasReviewed ? (
+                        <div className="bg-green-50 p-3 rounded-md border border-green-200 mt-3">
+                          <p className="text-sm text-green-800 flex items-center">
+                            <CheckCheck className="h-4 w-4 mr-2 text-green-500" />
+                            Vielen Dank für deine Bewertung!
+                          </p>
+                        </div>
+                      ) : (
+                        <Button 
+                          onClick={() => {
+                            // Den anderen Nutzer bestimmen (für die Bewertung)
+                            const otherUserId = isTaskCreator ? chat?.applicantId : chat?.taskCreatorId;
+                            const otherUserName = chat?.participantNames?.[otherUserId || ''] || 'Nutzer';
+                            const otherUserRole = isTaskCreator ? 'applicant' : 'creator';
+                            
+                            // Bewertungsmodul direkt öffnen
+                            openReviewModal({
+                              taskId: chat?.taskId || '',
+                              userId: otherUserId || '',
+                              userName: otherUserName,
+                              userRole: otherUserRole as 'creator' | 'applicant',
+                              chatId: chatId
+                            });
+                          }}
+                          className="w-full bg-yellow-500 hover:bg-yellow-600 mt-3"
+                        >
+                          <Star className="h-4 w-4 mr-2 fill-white" />
+                          Zusammenarbeit bewerten
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <Button 
+                      onClick={markTaskCompleted}
+                      disabled={chat?.status === 'completed' || chat?.status === 'completed_by_applicant'}
+                      className="w-full bg-blue-500 hover:bg-blue-600"
+                    >
+                      <CircleCheck className="h-4 w-4 mr-2" />
+                      {isTaskCreator ? "Auftrag abschließen" : "Als erledigt markieren"}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+      
+      {/* Chat-Nachrichten-Container */}
+      <div 
+        ref={chatContainerRef}
+        className="flex-1 overflow-y-auto p-4 pb-16"
+      >
+        {messages.length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <p className="mb-2">Keine Nachrichten</p>
+            <p className="text-sm">Starte die Konversation unten</p>
+          </div>
+        ) : (
+          messages.map(message => {
+            const isOwnMessage = message.senderId === user?.id;
+            return (
+              <ChatMessageItem 
+                key={message.id} 
+                message={message} 
+                isOwnMessage={isOwnMessage} 
+              />
+            );
+          })
+        )}
+        {/* Unsichtbares Element für automatisches Scrollen */}
+        <div ref={messagesEndRef} className="h-3" />
+      </div>
+      
+      {/* Eingabebereich - fixiert am unteren Bildschirmrand */}
+      <div 
+        className="fixed right-0 bg-white border-t border-gray-100 z-[999] shadow-sm modern-chat-input"
+        style={{ 
+          boxShadow: '0 -1px 2px rgba(0,0,0,0.05)',
+          width: '100%',
+          maxWidth: '100%',
+          left: 0,
+          bottom: 0,
+          margin: 0,
+          padding: 0,
+          position: 'fixed',
+          transition: 'transform 0.15s ease-out'
+        }}
+      >
+        <form onSubmit={handleSendMessage} className="p-2 pb-3 m-0">
+          <div className="flex items-center gap-2">
+            {/* Avatar des aktuellen Benutzers */}
+            <UserAvatar 
+              user={{
+                displayName: user?.name || 'Benutzer',
+                avatarBase64: userProfile?.avatarBase64,
+                avatarUrl: userProfile?.avatarUrl || user?.photoURL,
+                uid: user?.id
+              }}
+              size={32}
+            />
+            
+            {/* Eingabefeld */}
+            <div className="relative flex-1 bg-gray-100 rounded-full overflow-hidden flex items-center">
+              <Input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Nachricht schreiben..."
+                ref={inputRef}
+                className="flex-1 h-10 border-none bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 py-2 pl-4 pr-24"
+                disabled={sending || uploadingImage}
+              />
+              
+              <div className="absolute right-2 flex items-center space-x-1">
+                {/* Bild-Upload-Button */}
+                <button
+                  type="button"
+                  onClick={handleImageSelect}
+                  className={`text-gray-500 rounded-full p-1.5 ${selectedImage ? 'bg-indigo-100 text-indigo-600' : 'hover:bg-gray-200'}`}
+                  disabled={sending || uploadingImage}
+                >
+                  <ImageIcon className="h-5 w-5" />
+                </button>
+                
+                {/* Senden-Button */}
+                <Button
+                  type="submit"
+                  size="icon"
+                  className="h-8 w-8 rounded-full bg-indigo-500 hover:bg-indigo-600"
+                  disabled={(!newMessage.trim() && !selectedImage) || sending || uploadingImage}
+                >
+                  {sending || uploadingImage ? (
+                    <div className="h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+          
+          {/* Vorschau des ausgewählten Bildes */}
+          {selectedImage && (
+            <div className="mt-2 p-2 bg-gray-50 rounded-lg flex items-center">
+              <div className="w-10 h-10 bg-gray-200 rounded overflow-hidden flex-shrink-0 mr-2">
+                <img 
+                  src={URL.createObjectURL(selectedImage)} 
+                  alt="Vorschau" 
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium truncate">{selectedImage.name}</p>
+                <p className="text-xs text-gray-500">
+                  {(selectedImage.size / 1024).toFixed(1)} KB
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-gray-500 h-6 w-6 p-0 ml-1"
+                onClick={handleRemoveImage}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+          
+          {/* Verstecktes Input-Element für Dateiauswahl */}
+          <input 
+            type="file"
+            ref={fileInputRef}
+            className="hidden"
+            accept="image/*"
+            onChange={handleFileChange}
+          />
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default ModernChatView;

@@ -1,0 +1,95 @@
+import React, { useState } from "react";
+import { updateUserProfile } from "@/lib/firestore";
+import { uploadUserAvatar } from "@/lib/firebase";
+import { useAuth } from "@/lib/auth";
+import { toast } from "react-hot-toast";
+
+interface InitialSetupModalProps {
+  onClose: () => void;
+}
+
+const InitialSetupModal: React.FC<InitialSetupModalProps> = ({ onClose }) => {
+  const { currentUser } = useAuth();
+
+  const [username, setUsername] = useState("");
+  const [location, setLocation] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedFile(e.target.files[0]);
+    }
+  };
+
+  const handleSaveInitialProfile = async () => {
+    try {
+      setLoading(true);
+
+      let finalAvatarUrl = null;
+
+      if (selectedFile) {
+        finalAvatarUrl = await uploadUserAvatar(selectedFile, currentUser.uid);
+      }
+
+      await updateUserProfile(currentUser.uid, {
+        avatarUrl: finalAvatarUrl,
+        username,
+        location,
+      });
+
+      toast.success("Profil erfolgreich gespeichert");
+      onClose(); // oder Weiterleitung zur App
+    } catch (error) {
+      console.error("Fehler beim Initial-Setup:", error);
+      toast.error("Fehler beim Speichern");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center">
+      <div className="bg-white p-6 rounded-lg w-full max-w-md shadow-md">
+        <h2 className="text-xl font-bold mb-4">Profil vervollständigen</h2>
+
+        <label className="block mb-2 text-sm font-medium">Benutzername*</label>
+        <input
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          className="w-full p-2 mb-4 border rounded"
+          placeholder="z. B. tommy95"
+          required
+        />
+
+        <label className="block mb-2 text-sm font-medium">Standort</label>
+        <input
+          type="text"
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          className="w-full p-2 mb-4 border rounded"
+          placeholder="z. B. Bangkok"
+        />
+
+        <label className="block mb-2 text-sm font-medium">Profilbild (optional)</label>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="mb-4"
+        />
+
+        <button
+          onClick={handleSaveInitialProfile}
+          className="w-full bg-blue-600 text-white py-2 rounded disabled:opacity-50"
+          disabled={loading || !username}
+        >
+          {loading ? "Speichern..." : "Profil speichern"}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default InitialSetupModal;

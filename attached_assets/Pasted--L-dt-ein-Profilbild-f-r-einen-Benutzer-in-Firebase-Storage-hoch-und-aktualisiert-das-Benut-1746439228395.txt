@@ -1,0 +1,104 @@
+/**
+ * Lädt ein Profilbild für einen Benutzer in Firebase Storage hoch
+ * und aktualisiert das Benutzerprofil mit der neuen Bild-URL.
+ * 
+ * @param file Das hochzuladende Bild als File-Objekt
+ * @param userId Die ID des Benutzers
+ * @returns URL des hochgeladenen Bildes
+ * @throws Error wenn der Upload fehlschlägt
+ */
+export const uploadUserAvatar = async (file: File, userId: string): Promise<string> => {
+  // Input-Validierung
+  if (!file) throw new Error("Keine Datei zum Hochladen angegeben");
+  if (!userId) throw new Error("Keine Benutzer-ID angegeben");
+  if (!(file instanceof File)) throw new Error("Ungültiges Dateiobjekt");
+  
+  // Bildtyp validieren
+  const validImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (!validImageTypes.includes(file.type)) {
+    throw new Error(`Nicht unterstützter Dateityp: ${file.type}. Bitte verwende JPG, PNG, WebP oder GIF.`);
+  }
+  
+  // Dateigröße validieren
+  const maxSizeMB = 5;
+  if (file.size > maxSizeMB * 1024 * 1024) {
+    throw new Error(`Datei zu groß: ${(file.size / (1024 * 1024)).toFixed(2)} MB. Maximum: ${maxSizeMB} MB.`);
+  }
+  
+  try {
+    // Eindeutiger Dateiname mit Benutzer-ID, Timestamp und sanitiertem Originalnamen
+    const timestamp = Date.now();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9.]/g, '_').substring(0, 50);
+    const uniqueFileName = `avatar_${userId}_${timestamp}_${safeFileName}`;
+    
+    // Storage-Referenz mit korrektem Pfad erstellen
+    const storageRef = ref(storage, `avatars/${userId}/${uniqueFileName}`);
+    
+    // Metadaten für optimierten Cache und Content-Type
+    const metadata = {
+      contentType: file.type,
+      cacheControl: 'public, max-age=86400' // 24h Cache
+    };
+    
+    // Versuche zunächst, das Bild zu komprimieren, falls es kein GIF ist
+    let fileToUpload = file;
+    if (file.type !== 'image/gif') {
+      try {
+        const { compressImage } = await import('@/utils/imageUtils');
+        fileToUpload = await compressImage(file, {
+          maxSizeMB: 1, 
+          maxWidthOrHeight: 1200,
+          useWebWorker: true
+        });
+        console.log(`Bild komprimiert: ${(file.size / 1024 / 1024).toFixed(2)} MB → ${(fileToUpload.size / 1024 / 1024).toFixed(2)} MB`);
+      } catch (compressionError) {
+        console.warn("Bildkomprimierung fehlgeschlagen, verwende Original:", compressionError);
+        // Verwende das Original, wenn die Komprimierung fehlschlägt
+        fileToUpload = file;
+      }
+    }
+    
+    // Fortschrittsverfolgung vorbereiten (für zukünftige Implementierung)
+    const uploadTask = uploadBytesResumable(storageRef, fileToUpload, metadata);
+    
+    // Upload durchführen und auf Abschluss warten
+    const snapshot = await uploadTask;
+    console.log(`Upload abgeschlossen: ${snapshot.bytesTransferred} Bytes`);
+    
+    // Download-URL abrufen
+    const downloadUrl = await getDownloadURL(snapshot.ref);
+    
+    // Profil mit neuer Bild-URL aktualisieren
+    await updateUserProfile(userId, {
+      photoURL: downloadUrl,
+      avatarUrl: downloadUrl, // Für Abwärtskompatibilität
+      photoUpdatedAt: new Date().toISOString()
+    });
+    
+    return downloadUrl;
+  } catch (error: any) {
+    // Fehlerbehandlung mit nützlichen Meldungen für verschiedene Fehlertypen
+    console.error("Fehler beim Hochladen des Profilbilds:", error);
+    
+    // Firebase Storage spezifische Fehlercodes übersetzen
+    if (error.code) {
+      switch (error.code) {
+        case 'storage/unauthorized':
+          throw new Error("Zugriff verweigert. Bitte melde dich erneut an.");
+        case 'storage/canceled':
+          throw new Error("Upload wurde abgebrochen.");
+        case 'storage/retry-limit-exceeded':
+          throw new Error("Netzwerkfehler. Bitte überprüfe deine Internetverbindung.");
+        case 'storage/invalid-checksum':
+          throw new Error("Datei beschädigt. Bitte versuche es mit einer anderen Datei.");
+        case 'storage/server-file-wrong-size':
+          throw new Error("Server-Fehler beim Upload. Bitte versuche es später erneut.");
+        default:
+          throw new Error(`Upload-Fehler: ${error.message || 'Unbekannter Fehler'}`);
+      }
+    }
+    
+    // Allgemeiner Fehler
+    throw error;
+  }
+};

@@ -1,0 +1,69 @@
+// Bild-Upload
+const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  try {
+    console.log("⭐️ Bild-Upload gestartet");
+    const files = e.target.files;
+    
+    if (!files || files.length === 0) {
+      console.warn("⚠️ Keine Dateien ausgewählt");
+      return;
+    }
+    
+    const file = files[0];
+    
+    if (!file) {
+      console.error("⚠️ Datei ist null oder undefined");
+      toast({
+        title: "Fehler bei der Bildauswahl",
+        description: "Die ausgewählte Datei konnte nicht verarbeitet werden",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Validierung
+    const validImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!validImageTypes.includes(file.type)) {
+      toast({
+        title: "Nicht unterstützter Dateityp",
+        description: "Bitte verwende JPG, PNG, WebP oder GIF.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    const maxSizeMB = 5;
+    if (file.size > maxSizeMB * 1024 * 1024) {
+      toast({
+        title: "Datei zu groß",
+        description: `Maximum: ${maxSizeMB} MB. Aktuelle Größe: ${(file.size / (1024 * 1024)).toFixed(2)} MB.`,
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Alte Vorschau-URL freigeben, wenn vorhanden
+    if (imageUrl && imageUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(imageUrl);
+    }
+    
+    // Bild in den State setzen
+    setImage(file);
+    
+    // Neue Vorschau erstellen
+    const objectUrl = URL.createObjectURL(file);
+    setImageUrl(objectUrl);
+    
+    console.log(`✅ Bild akzeptiert: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    
+    // Input zurücksetzen für erneutes Hochladen desselben Bildes
+    e.target.value = '';
+  } catch (error) {
+    console.error("❌ Fehler bei der Bildverarbeitung:", error);
+    toast({
+      title: "Fehler bei der Bildverarbeitung",
+      description: error instanceof Error ? error.message : "Ein unbekannter Fehler ist aufgetreten",
+      variant: "destructive"
+    });
+  }
+};

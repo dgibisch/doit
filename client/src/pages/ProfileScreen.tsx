@@ -1,0 +1,832 @@
+import { useState, useRef, useEffect } from 'react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Separator } from '@/components/ui/separator';
+import { ChevronRight, User, MapPin, Bell, Settings, Award, LogOut, Upload, Camera, Database } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import UserAvatar from '@/components/ui/user-avatar';
+import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/hooks/use-toast';
+import { useLocation } from 'wouter';
+import AnalyticsDashboard from './AnalyticsDashboard';
+import { Textarea } from '@/components/ui/textarea';
+import { updateUserProfile, uploadUserAvatar, getTasks } from '@/lib/firebase';
+import PlacesAutocomplete from '@/components/PlacesAutocomplete';
+import { type LocationData } from '@/utils/geoUtils';
+import AdminTools from '@/components/AdminTools';
+import { compressImage, validateImage } from '@/utils/imageUtils';
+
+// Category options for the profile
+const categoryOptions = [
+  { id: 'gardening', label: 'Gardening' },
+  { id: 'errands', label: 'Errands' },
+  { id: 'tech', label: 'Technology' },
+  { id: 'homerepair', label: 'Home Repair' },
+  { id: 'petcare', label: 'Pet Care' },
+  { id: 'delivery', label: 'Delivery' },
+  { id: 'cleaning', label: 'Cleaning' }
+];
+
+// Format date function
+const formatDate = (date: Date): string => {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(date);
+};
+
+// Get status color
+const getStatusColor = (status: string): string => {
+  switch (status) {
+    case 'open':
+      return 'bg-green-100 text-green-800';
+    case 'matched':
+      return 'bg-blue-100 text-blue-800';
+    case 'complete':
+      return 'bg-purple-100 text-purple-800';
+    case 'cancelled':
+      return 'bg-red-100 text-red-800';
+    default:
+      return 'bg-gray-100 text-gray-800';
+  }
+};
+
+// Get category color
+const getCategoryColor = (category: string): string => {
+  const colorMap: Record<string, string> = {
+    'Gardening': 'bg-green-100 text-green-800',
+    'Errands': 'bg-blue-100 text-blue-800',
+    'Technology': 'bg-purple-100 text-purple-800',
+    'Home Repair': 'bg-yellow-100 text-yellow-800',
+    'Pet Care': 'bg-pink-100 text-pink-800',
+    'Delivery': 'bg-orange-100 text-orange-800',
+    'Cleaning': 'bg-cyan-100 text-cyan-800',
+  };
+  
+  return colorMap[category] || 'bg-gray-100 text-gray-800';
+};
+
+const ProfileScreen = () => {
+  const { userProfile, user, signOut, refreshUserProfile } = useAuth();
+  const profile = userProfile; // Für Kompatibilität mit bestehendem Code
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  
+  // Automatische Weiterleitung zur neuen Profil-Ansicht
+  useEffect(() => {
+    if (user && user.uid) {
+      console.log("Leite weiter zur modernen Profilansicht...");
+      navigate(`/user/${user.uid}`);
+    }
+  }, [user, navigate]);
+  
+  // Tasks from database
+  const [myTasks, setMyTasks] = useState<any[]>([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(false);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
+  
+  // Profile edit state
+  const [editMode, setEditMode] = useState(false);
+  const [displayName, setDisplayName] = useState(profile?.displayName || '');
+  const [userLocation, setUserLocation] = useState(profile?.location || 'Berlin, Germany');
+  const [locationData, setLocationData] = useState<LocationData | null>(profile?.locationCoordinates ? {
+    address: profile.location || '',
+    location: profile.locationCoordinates,
+    area: ''
+  } : null);
+  // Radius in einer typensicheren Art verwenden (radius kann in userProfile fehlen, daher optional)
+  const [radius, setRadius] = useState((profile as any)?.radius || 5);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(profile?.skills || ['errands', 'homerepair']);
+  const [bio, setBio] = useState(profile?.bio || '');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  
+  // Aktualisiere Formulardaten, wenn sich das Profil ändert
+  useEffect(() => {
+    if (profile) {
+      console.log('Updating profile form data with:', profile);
+      setDisplayName(profile.displayName || '');
+      setUserLocation(profile.location || 'Berlin, Germany');
+      if (profile.locationCoordinates) {
+        setLocationData({
+          address: profile.location || '',
+          location: profile.locationCoordinates,
+          area: ''
+        });
+      }
+      setRadius((profile as any).radius || 5);
+      setSelectedCategories(profile.skills || []);
+      setBio(profile.bio || '');
+    }
+  }, [profile]);
+  
+  // Notification settings
+  const [emailNotifications, setEmailNotifications] = useState(true);
+  const [pushNotifications, setPushNotifications] = useState(true);
+  const [newTaskAlerts, setNewTaskAlerts] = useState(true);
+  
+  // Load user tasks from database
+  useEffect(() => {
+    const loadUserTasks = async () => {
+      if (!user || !user.uid) return;
+      
+      try {
+        setIsLoadingTasks(true);
+        setLoadingError(null);
+        
+        // Use Firebase getTasks function with creator filter
+        const tasks = await getTasks({ creatorId: user.uid });
+        console.log('Loaded user tasks:', tasks);
+        setMyTasks(tasks);
+      } catch (error) {
+        console.error('Error loading user tasks:', error);
+        setLoadingError('Could not load your tasks. Please try again later.');
+        toast({
+          title: 'Error',
+          description: 'Failed to load your tasks. Please try again.',
+          variant: 'destructive'
+        });
+      } finally {
+        setIsLoadingTasks(false);
+      }
+    };
+    
+    loadUserTasks();
+  }, [user, toast]);
+  
+  // Handle file input change
+  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0];
+      
+      // Validiere das Bild mit der zentralen Validierungsfunktion
+      const { valid, error } = validateImage(file);
+      
+      if (!valid) {
+        toast({
+          title: "Ungültiges Bild",
+          description: error,
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      // Wenn bereits eine URL existiert, diese freigeben
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+      
+      // Bild akzeptieren und Preview erstellen
+      setImageFile(file);
+      
+      // Saubere Erstellung einer temporären URL für die Vorschau (ohne Base64-Konvertierung)
+      const objectUrl = URL.createObjectURL(file);
+      setImagePreview(objectUrl);
+      
+      console.log(`Bild akzeptiert: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+    }
+  };
+  
+  // Handle clicking on avatar to open file dialog
+  const handleAvatarClick = () => {
+    if (editMode && fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+  
+  // Handle save profile
+  const handleSaveProfile = async () => {
+    if (!user || !user.uid) {
+      toast({
+        title: "Error",
+        description: "User not authenticated",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Setze Upload-Status
+    setIsUploading(true);
+    
+    try {
+      // Ausgangswert für Profilbild (aktuelles Bild von Profil)
+      let finalAvatarUrl = profile?.photoURL;
+      
+      // Wenn ein neues Bild hochgeladen werden soll
+      if (imageFile) {
+        try {
+          console.log("Starting profile image upload process...");
+          
+          // Überprüfe, ob die Datei ein korrektes File-Objekt ist
+          if (!(imageFile instanceof File)) {
+            throw new Error("Ungültiges Bildobjekt");
+          }
+          
+          // Direkter Upload mit der uploadUserAvatar-Funktion
+          finalAvatarUrl = await uploadUserAvatar(imageFile, user.uid);
+          console.log("Profile image uploaded successfully:", finalAvatarUrl ? finalAvatarUrl.substring(0, 50) + "..." : "keine URL");
+          
+          if (!finalAvatarUrl) {
+            throw new Error("Keine Bild-URL vom Server erhalten");
+          }
+        } catch (error) {
+          console.error("Error uploading profile image:", error);
+          toast({
+            title: "Bild-Upload fehlgeschlagen",
+            description: error instanceof Error ? error.message : "Profilbild konnte nicht hochgeladen werden. Bitte versuchen Sie es erneut.",
+            variant: "destructive"
+          });
+          setIsUploading(false);
+          return; // Beende die Funktion bei einem Bild-Upload-Fehler
+        }
+      }
+      
+      // Profildaten, die aktualisiert werden sollen
+      const profileData: Record<string, any> = {
+        displayName,
+        location: userLocation,
+        locationCoordinates: locationData?.location || null,
+        radius,
+        bio,
+        skills: selectedCategories
+      };
+      
+      // Bild-URL zum Profil-Update hinzufügen, wenn eine neue URL vorhanden ist
+      if (finalAvatarUrl && finalAvatarUrl !== profile?.photoURL) {
+        profileData.photoURL = finalAvatarUrl;
+        profileData.photoURLSource = 'firebase'; // Quelle des Bilds tracken
+      }
+      
+      // Profil aktualisieren
+      console.log("Updating user profile with data:", profileData);
+      await updateUserProfile(user.uid, profileData);
+      
+      // Nutzerprofil explizit aktualisieren über Context-Funktion
+      await refreshUserProfile();
+      
+      // Erfolgsmeldung anzeigen
+      console.log("Profile update successful");
+      toast({
+        title: "Profile updated",
+        description: "Your profile information has been saved successfully.",
+      });
+      
+      // Vorschaubild und Datei zurücksetzen
+      setImageFile(null);
+      
+      // Temporäre URL freigeben und zurücksetzen
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+      setImagePreview(null);
+      setEditMode(false);
+    } catch (error) {
+      console.error("Error in profile update process:", error);
+      
+      // Spezifische Fehlermeldung anzeigen
+      toast({
+        title: "Update Failed",
+        description: error instanceof Error ? error.message : "Could not update your profile. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      // Immer den Upload-Status zurücksetzen
+      setIsUploading(false);
+    }
+  };
+  
+  // Handle logout
+  const handleLogout = () => {
+    signOut();
+    navigate('/');
+    toast({
+      title: "Logged out",
+      description: "You have been successfully logged out.",
+    });
+  };
+  
+  // Cleanup der temporären Objekt-URLs beim Unmounten der Komponente
+  useEffect(() => {
+    // Cleanup-Funktion, die beim Unmounten der Komponente ausgeführt wird
+    return () => {
+      // Wenn es ein imagePreview gibt, die zugehörige URL freigeben
+      if (imagePreview) {
+        console.log("Cleaning up object URL:", imagePreview);
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
+  
+  // Toggle category selection
+  const toggleCategory = (categoryId: string) => {
+    if (selectedCategories.includes(categoryId)) {
+      setSelectedCategories(selectedCategories.filter(id => id !== categoryId));
+    } else {
+      setSelectedCategories([...selectedCategories, categoryId]);
+    }
+  };
+  
+  return (
+    <div className="container mx-auto p-6 max-w-5xl">
+      <Tabs defaultValue="profile" className="w-full">
+        <TabsList className="mb-6">
+          <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="tasks">My Tasks</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+          {user?.email === 'dgibisch@gmail.com' && (
+            <TabsTrigger value="admin">
+              <Database className="h-4 w-4 mr-1" />
+              Admin
+            </TabsTrigger>
+          )}
+        </TabsList>
+        
+        {/* Profile Tab */}
+        <TabsContent value="profile">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold">My Profile</h1>
+            <p className="text-gray-600">Manage your account and preferences</p>
+          </div>
+          
+          <div className="flex flex-col gap-6">
+            {/* Profilbild und Statistiken Card */}
+            <Card>
+              <CardHeader className="text-center">
+                <div className="mx-auto mb-4 relative">
+                  {/* Hidden file input for profile image upload */}
+                  <input 
+                    type="file" 
+                    ref={fileInputRef}
+                    onChange={handleImageChange}
+                    className="hidden"
+                    accept="image/*"
+                  />
+                  
+                  {/* Avatar with conditionally clickable behavior */}
+                  <div 
+                    className={`relative ${editMode ? 'cursor-pointer group' : ''}`}
+                    onClick={handleAvatarClick}
+                  >
+                    {/* Profilbild mit der UserAvatar-Komponente */}
+                    <div className="h-24 w-24 overflow-hidden rounded-full">
+                      <div className="w-full h-full">
+                        <img 
+                          src={imagePreview || profile?.photoURL || "/default-avatar.png"}
+                          alt={profile?.displayName || "Benutzeravatar"}
+                          className="w-full h-full object-cover rounded-full"
+                          onError={(e) => {
+                            // Fallback auf Standard-Avatar bei Ladefehlern
+                            const target = e.target as HTMLImageElement;
+                            target.src = "/default-avatar.png";
+                          }}
+                        />
+                      </div>
+                    </div>
+                    
+                    {/* Overlay for edit mode */}
+                    {editMode && (
+                      <div className="absolute inset-0 bg-black bg-opacity-40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Camera className="h-8 w-8 text-white" />
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Show uploading indicator */}
+                  {isUploading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 rounded-full">
+                      <div className="animate-spin rounded-full h-6 w-6 border-2 border-t-transparent border-white"></div>
+                    </div>
+                  )}
+                </div>
+                <CardTitle>{profile?.displayName}</CardTitle>
+                <CardDescription>{profile?.email}</CardDescription>
+                <div className="mt-2 flex justify-center">
+                  <Badge className="bg-primary-100 text-primary-800">
+                    {profile?.level || 'Starter'}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  <div className="flex flex-col items-center py-2">
+                    <p className="text-sm text-gray-500">Completed</p>
+                    <p className="text-xl font-semibold">{profile?.completedTasks || 0}</p>
+                  </div>
+                  <div className="flex flex-col items-center py-2">
+                    <p className="text-sm text-gray-500">Posted</p>
+                    <p className="text-xl font-semibold">{profile?.postedTasks || 0}</p>
+                  </div>
+                  <div className="flex flex-col items-center py-2">
+                    <p className="text-sm text-gray-500">Rating</p>
+                    <div className="flex items-center">
+                      <p className="text-xl font-semibold">{profile?.rating || 0}/5</p>
+                      <span className="ml-1 text-yellow-400">{'★'.repeat(Math.round(profile?.rating || 0))}</span>
+                    </div>
+                    <p className="text-xs text-gray-500">({profile?.ratingCount || 0} reviews)</p>
+                  </div>
+                </div>
+              </CardContent>
+              <CardFooter>
+                {!editMode && (
+                  <Button variant="outline" className="w-full" onClick={() => setEditMode(true)}>
+                    Edit Profile
+                  </Button>
+                )}
+              </CardFooter>
+            </Card>
+            
+            {/* Account Information Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Account Information</CardTitle>
+              </CardHeader>
+              
+              {editMode ? (
+                <CardContent className="space-y-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="displayName">Display Name</Label>
+                    <Input 
+                      id="displayName" 
+                      value={displayName} 
+                      onChange={(e) => setDisplayName(e.target.value)} 
+                    />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="location">Adresse</Label>
+                    <PlacesAutocomplete
+                      initialAddress={userLocation}
+                      placeholder="Gib deinen Standort ein" 
+                      onLocationSelect={(data) => {
+                        if (data) {
+                          setUserLocation(data.address);
+                          setLocationData(data);
+                        }
+                      }}
+                      className="w-full"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="radius">Task Radius (km): {radius}</Label>
+                    <Input 
+                      id="radius"
+                      type="range" 
+                      min={1} 
+                      max={20} 
+                      value={radius} 
+                      onChange={(e) => setRadius(parseInt(e.target.value))} 
+                    />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="bio">Bio</Label>
+                    <Textarea 
+                      id="bio" 
+                      value={bio} 
+                      onChange={(e) => setBio(e.target.value)}
+                      placeholder="Write a short description about yourself..."
+                      className="resize-none"
+                      rows={4}
+                    />
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <Label>Preferred Categories</Label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {categoryOptions.map(category => (
+                        <div key={category.id} className="flex items-center space-x-3 bg-gray-50 p-2 rounded-md">
+                          <input 
+                            type="checkbox" 
+                            id={category.id}
+                            checked={selectedCategories.includes(category.id)}
+                            onChange={() => toggleCategory(category.id)}
+                            className="h-5 w-5 rounded border-gray-300 text-primary focus:ring-primary"
+                          />
+                          <label htmlFor={category.id} className="flex-grow text-sm font-medium">
+                            {category.label}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Save buttons are now in CardFooter */}
+                </CardContent>
+              ) : (
+                <CardContent className="space-y-6">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Display Name</h3>
+                    <p className="mt-1 text-lg">{profile?.displayName}</p>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Email</h3>
+                    <p className="mt-1 text-lg">{profile?.email}</p>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Location</h3>
+                    <p className="mt-1 text-lg">{userLocation}</p>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Task Radius</h3>
+                    <p className="mt-1 text-lg">{radius} km</p>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Bio</h3>
+                    <p className="mt-1 text-lg">{bio || 'No bio provided yet.'}</p>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500 mb-2">Preferred Categories</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {categoryOptions
+                        .filter(cat => selectedCategories.includes(cat.id))
+                        .map(category => (
+                          <Badge key={category.id} className="text-sm py-1 px-3">{category.label}</Badge>
+                        ))}
+                    </div>
+                  </div>
+                </CardContent>
+              )}
+              
+              {editMode && (
+                <CardFooter className="flex justify-between">
+                  <Button variant="outline" onClick={() => setEditMode(false)}>
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleSaveProfile}
+                    disabled={isUploading}
+                    className="relative"
+                  >
+                    {isUploading ? (
+                      <>
+                        <span className="mr-2">Saving...</span>
+                        <span className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-t-transparent border-white"></div>
+                        </span>
+                      </>
+                    ) : "Save Changes"}
+                  </Button>
+                </CardFooter>
+              )}
+            </Card>
+          </div>
+        </TabsContent>
+        
+        {/* My Tasks Tab */}
+        <TabsContent value="tasks">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold">My Tasks</h1>
+            <p className="text-gray-600">Manage the tasks you've created and applied for</p>
+          </div>
+          
+          <Tabs defaultValue="created">
+            <TabsList className="mb-6">
+              <TabsTrigger value="created">Created Tasks</TabsTrigger>
+              <TabsTrigger value="applied">Applied Tasks</TabsTrigger>
+              <TabsTrigger value="completed">Completed</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="created" className="space-y-6">
+              {isLoadingTasks ? (
+                <div className="text-center py-10">
+                  <div className="animate-spin rounded-full h-12 w-12 border-2 border-t-transparent border-primary mx-auto mb-4"></div>
+                  <p className="text-gray-500">Loading tasks...</p>
+                </div>
+              ) : loadingError ? (
+                <div className="text-center py-10">
+                  <p className="text-red-500 mb-2">{loadingError}</p>
+                  <Button 
+                    onClick={() => {
+                      if (user && user.uid) {
+                        setIsLoadingTasks(true);
+                        getTasks({ creatorId: user.uid })
+                          .then(tasks => {
+                            setMyTasks(tasks);
+                            setLoadingError(null);
+                          })
+                          .catch(error => {
+                            console.error('Error reloading tasks:', error);
+                            setLoadingError('Failed to load tasks. Please try again.');
+                          })
+                          .finally(() => setIsLoadingTasks(false));
+                      }
+                    }}
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              ) : myTasks.length > 0 ? (
+                myTasks.map(task => (
+                  <Card 
+                    key={task.id} 
+                    className="cursor-pointer"
+                    onClick={() => {
+                      const taskId = task.id;
+                      console.log("Navigating to task:", taskId);                      
+                      window.location.href = `/task/${taskId}`;
+                    }}
+                  >
+                    <CardHeader className="pb-2">
+                      <div className="flex justify-between items-start">
+                        <CardTitle>{task.title}</CardTitle>
+                        <Badge className={getStatusColor(task.status)}>
+                          {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
+                        </Badge>
+                      </div>
+                      <CardDescription>
+                        Created on {formatDate(task.createdAt.toDate())}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="pb-2">
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge className={getCategoryColor(task.category)} variant="outline">
+                          {task.category}
+                        </Badge>
+                      </div>
+                    </CardContent>
+                    <CardFooter className="flex justify-end">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent card click from firing
+                          const taskId = task.id;
+                          console.log("Navigating to:", `/task/${taskId}`);
+                          window.location.href = `/task/${taskId}`;
+                        }}
+                      >
+                        View Details
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                ))
+              ) : (
+                <div className="text-center py-10">
+                  <p className="text-gray-500">You haven't created any tasks yet</p>
+                  <Button className="mt-4" onClick={() => navigate('/create-task')}>
+                    Create Task
+                  </Button>
+                </div>
+              )}
+            </TabsContent>
+            
+            <TabsContent value="applied" className="space-y-6">
+              <div className="text-center py-10">
+                <p className="text-gray-500">You haven't applied for any tasks yet</p>
+                <Button className="mt-4" onClick={() => navigate('/tasks')}>
+                  Browse Tasks
+                </Button>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="completed" className="space-y-6">
+              <div className="text-center py-10">
+                <p className="text-gray-500">No completed tasks yet</p>
+                <Button className="mt-4" onClick={() => navigate('/tasks')}>
+                  Browse Tasks
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+        
+        {/* Analytics Tab */}
+        <TabsContent value="analytics">
+          <AnalyticsDashboard />
+        </TabsContent>
+        
+        {/* Admin Tab */}
+        <TabsContent value="admin">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold">Admin Tools</h1>
+            <p className="text-gray-600">Administrative tools for database management</p>
+          </div>
+          
+          <AdminTools />
+        </TabsContent>
+        
+        {/* Settings Tab */}
+        <TabsContent value="settings">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold">Settings</h1>
+            <p className="text-gray-600">Manage your account and app preferences</p>
+          </div>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle>Notification Settings</CardTitle>
+              <CardDescription>
+                Configure how you receive notifications from the DoIt app
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="email-notifications">Email Notifications</Label>
+                  <p className="text-sm text-gray-500">
+                    Receive notifications about tasks and messages via email
+                  </p>
+                </div>
+                <Switch 
+                  id="email-notifications" 
+                  checked={emailNotifications}
+                  onCheckedChange={setEmailNotifications}
+                />
+              </div>
+              
+              <Separator />
+              
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="push-notifications">Push Notifications</Label>
+                  <p className="text-sm text-gray-500">
+                    Receive mobile notifications on your device
+                  </p>
+                </div>
+                <Switch 
+                  id="push-notifications" 
+                  checked={pushNotifications}
+                  onCheckedChange={setPushNotifications}
+                />
+              </div>
+              
+              <Separator />
+              
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="task-alerts">New Task Alerts</Label>
+                  <p className="text-sm text-gray-500">
+                    Get notified when new tasks are posted in your area
+                  </p>
+                </div>
+                <Switch 
+                  id="task-alerts" 
+                  checked={newTaskAlerts}
+                  onCheckedChange={setNewTaskAlerts}
+                />
+              </div>
+            </CardContent>
+            <CardFooter>
+              <Button className="w-full" onClick={() => {
+                toast({
+                  title: "Settings saved",
+                  description: "Your notification preferences have been updated.",
+                });
+              }}>
+                Save Preferences
+              </Button>
+            </CardFooter>
+          </Card>
+          
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Account Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Button variant="outline" className="w-full justify-between" onClick={handleLogout}>
+                <div className="flex items-center">
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign Out
+                </div>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              
+              <Button variant="outline" className="w-full justify-between text-destructive hover:text-destructive">
+                <div className="flex items-center">
+                  <svg 
+                    className="h-4 w-4 mr-2" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24" 
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Delete Account
+                </div>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+};
+
+export default ProfileScreen;

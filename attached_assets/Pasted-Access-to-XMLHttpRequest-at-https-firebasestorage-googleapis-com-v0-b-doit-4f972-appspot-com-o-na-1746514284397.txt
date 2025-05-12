@@ -1,0 +1,94 @@
+Access to XMLHttpRequest at 'https://firebasestorage.googleapis.com/v0/b/doit-4f972.appspot.com/o?name=tasks%2Fimages%2F1746514256328%2F1746514256450_images__1_.jpg' from origin 'https://32c645c3-fcd5-4aee-929b-805c04bf0e30-00-1mx51ac24cjq9.worf.replit.dev' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: It does not have HTTP ok status.Understand this error
+firebase.ts:1364 
+            
+            
+           POST https://firebasestorage.googleapis.com/v0/b/doit-4f972.appspot.com/o?name=tasks%2Fimages%2F1746514256328%2F1746514256450_images__1_.jpg net::ERR_FAILED
+t.enable.e.send @ Network.js:159
+send @ firebase_storage.js?v=cfc93236:1491
+doTheRequest @ firebase_storage.js?v=cfc93236:452
+(anonymous) @ firebase_storage.js?v=cfc93236:276
+setTimeout
+callWithDelay @ firebase_storage.js?v=cfc93236:274
+start @ firebase_storage.js?v=cfc93236:334
+start_ @ firebase_storage.js?v=cfc93236:506
+(anonymous) @ firebase_storage.js?v=cfc93236:428
+NetworkRequest @ firebase_storage.js?v=cfc93236:425
+makeRequest @ firebase_storage.js?v=cfc93236:558
+_makeRequest @ firebase_storage.js?v=cfc93236:2403
+makeRequestWithTokens @ firebase_storage.js?v=cfc93236:2416
+await in makeRequestWithTokens
+uploadBytes$1 @ firebase_storage.js?v=cfc93236:2139
+uploadBytes @ firebase_storage.js?v=cfc93236:2428
+uploadTaskImages @ firebase.ts:1364
+await in uploadTaskImages
+uploadImages @ CreateTaskScreen.tsx:191
+handleSubmit @ CreateTaskScreen.tsx:270
+callCallback2 @ chunk-RPCDYKBN.js?v=cfc93236:3674
+invokeGuardedCallbackDev @ chunk-RPCDYKBN.js?v=cfc93236:3699
+invokeGuardedCallback @ chunk-RPCDYKBN.js?v=cfc93236:3733
+invokeGuardedCallbackAndCatchFirstError @ chunk-RPCDYKBN.js?v=cfc93236:3736
+executeDispatch @ chunk-RPCDYKBN.js?v=cfc93236:7014
+processDispatchQueueItemsInOrder @ chunk-RPCDYKBN.js?v=cfc93236:7034
+processDispatchQueue @ chunk-RPCDYKBN.js?v=cfc93236:7043
+dispatchEventsForPlugins @ chunk-RPCDYKBN.js?v=cfc93236:7051
+(anonymous) @ chunk-RPCDYKBN.js?v=cfc93236:7174
+batchedUpdates$1 @ chunk-RPCDYKBN.js?v=cfc93236:18913
+batchedUpdates @ chunk-RPCDYKBN.js?v=cfc93236:3579
+dispatchEventForPluginEventSystem @ chunk-RPCDYKBN.js?v=cfc93236:7173
+dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEventReplay @ chunk-RPCDYKBN.js?v=cfc93236:5478
+dispatchEvent @ chunk-RPCDYKBN.js?v=cfc93236:5472
+dispatchDiscreteEvent @ chunk-RPCDYKBN.js?v=cfc93236:5449Understand this error
+7Console.js:61 1 Google Places Dropdowns automatisch neu positioniert
+32c645c3-fcd5-4aee-929b-805c04bf0e30-00-1mx51ac24cjq9.worf.replit.dev/create-task:1 Access to XMLHttpRequest at 'https://firebasestorage.googleapis.com/v0/b/doit-4f972.appspot.com/o?name=tasks%2Fimages%2F1746514256328%2F1746514256450_images__1_.jpg' from origin 'https://32c645c3-fcd5-4aee-929b-805c04bf0e30-00-1mx51ac24cjq9.worf.replit.dev' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: It does not have HTTP ok status.Understand this error
+firebase.ts:1364 
+            
+            
+           POST https://firebasestorage.googleapis.com/v0/b/doit-4f972.appspot.com/o?name=tasks%2Fimages%2F1746514256328%2F1746514256450_images__1_.jpg net::ERR_FAILED
+t.enable.e.send @ Network.js:159
+send @ firebase_storage.js?v=cfc93236:1491
+doTheRequest @ firebase_storage.js?v=cfc93236:452
+(anonymous) @ firebase_storage.js?v=cfc93236:276
+setTimeout
+callWithDelay @ firebase_storage.js?v=cfc93236:274
+responseHandler @ firebase_storage.js?v=cfc93236:310
+(anonymous) @ firebase_storage.js?v=cfc93236:461
+Promise.then
+doTheRequest @ firebase_storage.js?v=cfc93236:452
+(anonymous) @ firebase_storage.js?v=cfc93236:276
+setTimeout
+callWithDelay @ firebase_storage.js?v=cfc93236:274
+start @ firebase_storage.js?v=cfc93236:334
+start_ @ firebase_storage.js?v=cfc93236:506
+(anonymous) @ firebase_storage.js?v=cfc93236:428
+NetworkRequest @ firebase_storage.js?v=cfc93236:425
+makeRequest @ firebase_storage.js?v=cfc93236:558
+_makeRequest @ firebase_storage.js?v=cfc93236:2403
+makeRequestWithTokens @ firebase_storage.js?v=cfc93236:2416
+await in makeRequestWithTokens
+uploadBytes$1 @ firebase_storage.js?v=cfc93236:2139
+uploadBytes @ firebase_storage.js?v=cfc93236:2428
+uploadTaskImages @ firebase.ts:1364
+await in uploadTaskImages
+uploadImages @ CreateTaskScreen.tsx:191
+handleSubmit @ CreateTaskScreen.tsx:270
+callCallback2 @ chunk-RPCDYKBN.js?v=cfc93236:3674
+invokeGuardedCallbackDev @ chunk-RPCDYKBN.js?v=cfc93236:3699
+invokeGuardedCallback @ chunk-RPCDYKBN.js?v=cfc93236:3733
+invokeGuardedCallbackAndCatchFirstError @ chunk-RPCDYKBN.js?v=cfc93236:3736
+executeDispatch @ chunk-RPCDYKBN.js?v=cfc93236:7014
+processDispatchQueueItemsInOrder @ chunk-RPCDYKBN.js?v=cfc93236:7034
+processDispatchQueue @ chunk-RPCDYKBN.js?v=cfc93236:7043
+dispatchEventsForPlugins @ chunk-RPCDYKBN.js?v=cfc93236:7051
+(anonymous) @ chunk-RPCDYKBN.js?v=cfc93236:7174
+batchedUpdates$1 @ chunk-RPCDYKBN.js?v=cfc93236:18913
+batchedUpdates @ chunk-RPCDYKBN.js?v=cfc93236:3579
+dispatchEventForPluginEventSystem @ chunk-RPCDYKBN.js?v=cfc93236:7173
+dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEventReplay @ chunk-RPCDYKBN.js?v=cfc93236:5478
+dispatchEvent @ chunk-RPCDYKBN.js?v=cfc93236:5472
+dispatchDiscreteEvent @ chunk-RPCDYKBN.js?v=cfc93236:5449Understand this error
+9Console.js:61 1 Google Places Dropdowns automatisch neu positioniert
+32c645c3-fcd5-4aee-929b-805c04bf0e30-00-1mx51ac24cjq9.worf.replit.dev/create-task:1 Access to XMLHttpRequest at 'https://firebasestorage.googleapis.com/v0/b/doit-4f972.appspot.com/o?name=tasks%2Fimages%2F1746514256328%2F1746514256450_images__1_.jpg' from origin 'https://32c645c3-fcd5-4aee-929b-805c04bf0e30-00-1mx51ac24cjq9.worf.replit.dev' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: It does not have HTTP ok status.Understand this error
+firebase.ts:1364 
+            
+            
+           POST https://firebasestorage.googleapis.com/v0/b/doit-4f972.appspot.com/o?name=tasks%2Fimages%2F1746514256328%2F1746514256450_images__1_.jpg net::ERR_FAILED

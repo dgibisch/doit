@@ -1,0 +1,321 @@
+Hier sind die wahrscheinlichen Probleme und Lösungen:
+Probleme bei der Anwendung der Base64-Lösung
+
+Unvollständige Implementierung: Die Base64-Lösung wurde möglicherweise nur für das Profilbild umgesetzt, nicht aber für andere Bildupload-Funktionen wie im Messenger.
+Unterschiedliche Komponenten: Jede Komponente mit Bildupload (Profilbild, Messenger, Aufgaben) hat vielleicht ihren eigenen Upload-Code, der separat angepasst werden muss.
+Fehlendes zentrales System: Es gibt möglicherweise keine zentrale Upload-Funktion, die von allen Teilen der App verwendet wird.
+
+Lösungsvorschlag: Einheitliches Bildupload-System
+Hier ist ein Plan für eine konsistente Lösung:
+1. Zentrale Bildupload-Funktion erstellen
+typescript// In utils/imageUtils.ts oder lib/imageHandlers.ts
+
+/**
+ * Wandelt ein File-Objekt in einen Base64-String um
+ */
+export const convertToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
+/**
+ * Komprimiert ein Bild vor der Base64-Umwandlung
+ * Nutzt browser-image-compression, falls verfügbar
+ */
+export const compressAndConvertToBase64 = async (file: File, maxSizeMB = 0.5): Promise<string> => {
+  try {
+    // Prüfe Dateityp und -größe
+    if (!file.type.startsWith('image/')) {
+      throw new Error('Datei ist kein Bild');
+    }
+    
+    let compressedFile = file;
+    
+    // Versuche zu komprimieren, wenn Datei zu groß ist
+    if (file.size > maxSizeMB * 1024 * 1024) {
+      try {
+        const { compressImage } = await import('@/utils/imageUtils');
+        compressedFile = await compressImage(file, {
+          maxSizeMB,
+          maxWidthOrHeight: 800,
+          useWebWorker: true
+        });
+        console.log(`Bild komprimiert: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB`);
+      } catch (error) {
+        console.warn("Komprimierung fehlgeschlagen, verwende Original:", error);
+        compressedFile = file;
+      }
+    }
+    
+    // Zu Base64 konvertieren
+    return await convertToBase64(compressedFile);
+  } catch (error) {
+    console.error("Fehler bei der Bildverarbeitung:", error);
+    throw error;
+  }
+};
+2. Bildupload-Funktionen in Firebase-Datei vereinheitlichen
+typescript// In lib/firebase.ts oder services/imageService.ts
+
+/**
+ * Upload für Profilbilder als Base64
+ */
+export const uploadUserAvatarBase64 = async (imageData: string | File, userId: string): Promise<string> => {
+  try {
+    // Falls ein File-Objekt übergeben wurde, erst zu Base64 konvertieren
+    let base64Data = typeof imageData === 'string' 
+      ? imageData 
+      : await compressAndConvertToBase64(imageData, 0.5); // Max 0.5 MB
+    
+    // Base64-String in Firestore speichern
+    const userRef = doc(db, "users", userId);
+    
+    // Optional: Prüfen, ob die Datei zu groß ist
+    const estimatedSize = base64Data.length;
+    if (estimatedSize > 700000) { // ca. 700 KB Schwellenwert (Firestore-Limit: 1 MB)
+      console.warn("Bild zu groß für Firestore, versuche erneute Komprimierung");
+      
+      // Versuche, URL von Base64 zu extrahieren (für Debugging)
+      const startIdx = base64Data.indexOf('base64,') + 7;
+      const dataLength = base64Data.length - startIdx;
+      console.log(`Base64 Datenlänge: ${dataLength} Zeichen (${(dataLength / 1024 / 1024).toFixed(2)} MB as text)`);
+      
+      // Hier könnte weitere Komprimierung erfolgen oder ein Fallback zu einem Standard-Avatar
+      if (estimatedSize > 900000) {
+        console.error("Bild zu groß für Firestore auch nach Komprimierung");
+        return "https://ui-avatars.com/api/?name=" + encodeURIComponent(userId);
+      }
+    }
+    
+    await updateDoc(userRef, {
+      photoURL: base64Data,
+      avatarUrl: base64Data,
+      photoUpdatedAt: new Date().toISOString()
+    });
+    
+    return base64Data;
+  } catch (error) {
+    console.error("Fehler beim Speichern des Base64-Bildes:", error);
+    throw error;
+  }
+};
+
+/**
+ * Upload für Messenger-Bilder als Base64
+ */
+export const uploadChatImageBase64 = async (imageData: string | File, chatId: string, userId: string): Promise<string> => {
+  try {
+    // Falls ein File-Objekt übergeben wurde, erst zu Base64 konvertieren
+    let base64Data = typeof imageData === 'string' 
+      ? imageData 
+      : await compressAndConvertToBase64(imageData, 0.3); // Max 0.3 MB für Chat-Bilder
+    
+    // Erstelle eine eindeutige Message-ID
+    const messageId = `${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    
+    // Base64-Bild als Nachricht speichern
+    const messagesRef = collection(db, `chats/${chatId}/messages`);
+    await addDoc(messagesRef, {
+      senderId: userId,
+      imageBase64: base64Data,
+      timestamp: serverTimestamp()
+    });
+    
+    // Chat aktualisieren
+    const chatRef = doc(db, "chats", chatId);
+    await updateDoc(chatRef, {
+      lastMessage: "📷 Bild gesendet",
+      lastMessageAt: serverTimestamp()
+    });
+    
+    return base64Data;
+  } catch (error) {
+    console.error("Fehler beim Speichern des Chat-Bildes:", error);
+    throw error;
+  }
+};
+
+/**
+ * Upload für Aufgaben-Bilder als Base64
+ */
+export const uploadTaskImageBase64 = async (imageData: string | File, taskId: string): Promise<string> => {
+  try {
+    // Falls ein File-Objekt übergeben wurde, erst zu Base64 konvertieren
+    let base64Data = typeof imageData === 'string' 
+      ? imageData 
+      : await compressAndConvertToBase64(imageData, 0.7); // Max 0.7 MB für Aufgaben-Bilder
+    
+    // Das Aufgaben-Dokument aktualisieren
+    const taskRef = doc(db, "tasks", taskId);
+    
+    // Prüfen, ob es bereits Bilder gibt
+    const taskSnap = await getDoc(taskRef);
+    
+    if (taskSnap.exists()) {
+      const taskData = taskSnap.data();
+      // Vorhandenes Array von Base64-Bildern oder neues erstellen
+      const existingImages = taskData.imageBase64Array || [];
+      
+      // Neues Bild hinzufügen
+      await updateDoc(taskRef, {
+        imageBase64Array: [...existingImages, base64Data],
+        updatedAt: serverTimestamp()
+      });
+    } else {
+      // Aufgabe existiert nicht
+      throw new Error("Aufgabe nicht gefunden");
+    }
+    
+    return base64Data;
+  } catch (error) {
+    console.error("Fehler beim Speichern des Aufgaben-Bildes:", error);
+    throw error;
+  }
+};
+3. Einheitliche Verwendung in allen Komponenten
+Für die Messenger-Komponente könnte es so aussehen:
+typescript// In components/messenger/ChatInput.tsx oder ähnlich
+
+import { useState } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import { uploadChatImageBase64 } from '@/lib/firebase';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Send, Image, Loader } from 'lucide-react';
+
+export function ChatInput({ chatId }) {
+  const [message, setMessage] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const { user } = useAuth();
+  
+  const handleImageChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    try {
+      setIsUploading(true);
+      
+      // Gleiche Struktur wie beim Profilbild-Upload
+      await uploadChatImageBase64(file, chatId, user.uid);
+      
+      // Input zurücksetzen
+      e.target.value = '';
+    } catch (error) {
+      console.error("Fehler beim Hochladen des Bildes:", error);
+      // Toast-Benachrichtigung hier
+    } finally {
+      setIsUploading(false);
+    }
+  };
+  
+  // Rest der Komponente...
+  
+  return (
+    <div className="flex items-center gap-2 p-2 border-t">
+      <Input 
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="Nachricht schreiben..."
+        disabled={isUploading}
+      />
+      
+      {/* Bild-Upload-Button */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => document.getElementById('chat-image').click()}
+        disabled={isUploading}
+      >
+        {isUploading ? <Loader className="h-5 w-5 animate-spin" /> : <Image className="h-5 w-5" />}
+      </Button>
+      <input
+        id="chat-image"
+        type="file"
+        accept="image/*"
+        onChange={handleImageChange}
+        className="hidden"
+      />
+      
+      <Button 
+        variant="primary" 
+        size="icon"
+        onClick={handleSendMessage}
+        disabled={!message.trim() || isUploading}
+      >
+        <Send className="h-5 w-5" />
+      </Button>
+    </div>
+  );
+}
+4. Anpassung der Anzeige-Komponenten
+Sorge dafür, dass alle Komponenten, die Bilder anzeigen, sowohl mit URLs als auch mit Base64-Strings umgehen können:
+typescript// UserAvatar.tsx als Beispiel
+
+export function UserAvatar({ user, size = "md" }) {
+  const imageSource = user?.photoURL || user?.avatarBase64 || "https://ui-avatars.com/api/?name=" + encodeURIComponent(user?.displayName || 'User');
+  
+  const sizeClass = {
+    sm: "w-8 h-8",
+    md: "w-12 h-12",
+    lg: "w-20 h-20"
+  }[size];
+  
+  return (
+    <div className={`rounded-full overflow-hidden ${sizeClass}`}>
+      <img 
+        src={imageSource} 
+        alt={user?.displayName || 'Benutzer'} 
+        className="w-full h-full object-cover"
+        onError={(e) => {
+          // Fallback bei Fehler
+          e.target.src = "https://ui-avatars.com/api/?name=" + encodeURIComponent(user?.displayName || 'User');
+        }}
+      />
+    </div>
+  );
+}
+5. Zentrale Bildkomprimierung
+Eine weitere Verbesserung wäre, immer zuerst zu komprimieren, um die Firestore-Limits einzuhalten:
+typescript// in utils/imageUtils.ts
+
+export const ensureSmallerThan = async (base64: string, maxSizeKB: number): Promise<string> => {
+  // Größe schätzen
+  const sizeInKB = Math.round(base64.length / 1.37 / 1024); // Ungefähre Umrechnung
+  
+  if (sizeInKB <= maxSizeKB) {
+    return base64; // Bereits klein genug
+  }
+  
+  // Versuche, das Bild zu komprimieren
+  try {
+    // Base64 zu Blob konvertieren
+    const fetchResponse = await fetch(base64);
+    const blob = await fetchResponse.blob();
+    
+    // Bild-Dimensionen reduzieren
+    const img = new Image();
+    img.src = base64;
+    await new Promise(resolve => { img.onload = resolve; });
+    
+    // Skalierungsfaktor berechnen
+    const scaleFactor = Math.sqrt(maxSizeKB / sizeInKB);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width * scaleFactor;
+    canvas.height = img.height * scaleFactor;
+    
+    // Auf Canvas zeichnen
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    
+    // Als komprimiertes JPEG mit reduzierter Qualität zurückgeben
+    return canvas.toDataURL('image/jpeg', 0.7);
+  } catch (error) {
+    console.error('Fehler bei der Bildkomprimierung:', error);
+    return base64; // Original zurückgeben im Fehlerfall
+  }
+};
+Diese Lösungen sollten einheitlich in allen Teilen deiner App funktionieren. Der Schlüssel ist, einen konsistenten Ansatz für alle Bildupload-Funktionen zu verwenden, anstatt jede Komponente separat zu behandeln.

@@ -1,0 +1,61 @@
+// Ziel: Initiales Profil-Setup nach erster Registrierung
+// 
+// Nach erfolgreicher Registrierung und dem **ersten Login** (per E-Mail oder Google)
+// soll ein Dialog erscheinen, in dem der Nutzer:
+// 1. Einen eindeutigen Spitznamen (username) wählt – **Pflichtfeld, einzigartig**
+// 2. Seinen Standort per Google Places Autocomplete auswählt – **Pflichtfeld**
+// 3. Optional ein Profilbild hochlädt (avatarUrl) – **kein Pflichtfeld**
+//
+// Der Dialog erscheint **nur einmalig nach der Registrierung**, wenn username oder location fehlen,
+// und nicht bei jedem späteren Login. Die Daten werden in der User-Datenbank gespeichert
+// und sind später unter "Mein Profil" bearbeitbar.
+// Username und Avatar ersetzen überall "Anonymous".
+
+// BACKEND: models/User.js erweitern
+
+username: { type: String, required: true, unique: true },
+location: {
+  address: String,
+  lat: Number,
+  lng: Number
+},
+avatarUrl: { type: String },
+
+// BACKEND: Neue Route zur Username-Überprüfung
+// routes/users.js
+router.get("/check-username/:username", async (req, res) => {
+  const existing = await User.findOne({ username: req.params.username });
+  res.json({ available: !existing });
+});
+
+// FRONTEND: Beim ersten Login prüfen, ob Setup nötig ist
+if (!currentUser.username || !currentUser.location?.lat) {
+  setShowInitialSetupModal(true); // neues Modal anzeigen
+}
+
+// FRONTEND: Modal-Komponente SetupModal.tsx (verkürzt)
+
+<Modal open={showInitialSetupModal}>
+  <input
+    value={username}
+    onChange={checkUsername}
+    placeholder="Spitzname wählen"
+  />
+
+  <GooglePlacesAutocomplete onSelect={(data) => setLocation(data)} />
+
+  <input type="file" onChange={uploadAvatar} />
+
+  <button onClick={saveProfileSetup}>Speichern</button>
+</Modal>
+
+// saveProfileSetup Funktion (Frontend)
+await axios.put(`/api/users/${userId}`, {
+  username,
+  location,
+  avatarUrl
+});
+
+// FEHLERBEHEBUNG: Anonymus vermeiden (z. B. TaskCard.tsx)
+const displayName = user.username || "Unbekannt";
+const avatar = user.avatarUrl || defaultAvatarUrl;

@@ -1,0 +1,601 @@
+# Anweisungen für den Aufbau des Nutzerprofils
+
+Basierend auf dem Screenshot sehe ich, dass das Nutzerprofil mehrere Probleme aufweist: falsche Anzeige der Statistiken (0-Werte trotz vorhandener Bewertungen), "Invalid Date" als Beitrittsdatum und ein verbesserungswürdiges Design. Hier ist eine vollständige Anleitung zur Überarbeitung dieses Bereichs:
+
+## 1. Datenmodell und Abfrage verbessern
+
+Zuerst müssen wir sicherstellen, dass die Daten korrekt aus Firestore abgerufen werden:
+
+```typescript
+// In einer Datei wie lib/profileService.ts oder direkt in der Profilkomponente
+
+/**
+ * Holt vollständige Profilstatistiken für einen Benutzer
+ */
+export const getUserProfileStats = async (userId: string) => {
+  try {
+    // Benutzergrundprofil abrufen
+    const userRef = doc(db, "users", userId);
+    const userSnap = await getDoc(userRef);
+    
+    if (!userSnap.exists()) {
+      throw new Error("Benutzerprofil nicht gefunden");
+    }
+    
+    const userData = userSnap.data();
+    
+    // Tasks des Benutzers abrufen (sowohl erstellte als auch erledigte)
+    const tasksRef = collection(db, "tasks");
+    
+    // Erstellte Tasks
+    const createdTasksQuery = query(
+      tasksRef, 
+      where("creatorId", "==", userId)
+    );
+    const createdTasksSnap = await getDocs(createdTasksQuery);
+    const createdTasks = createdTasksSnap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    
+    // Erledigte Tasks (wo der Benutzer der ausgewählte Tasker war)
+    const completedTasksQuery = query(
+      tasksRef,
+      where("taskerId", "==", userId),
+      where("status", "==", "completed")
+    );
+    const completedTasksSnap = await getDocs(completedTasksQuery);
+    const completedTasks = completedTasksSnap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    
+    // Bewertungen abrufen
+    const reviewsRef = collection(db, "reviews");
+    const reviewsQuery = query(
+      reviewsRef,
+      where("userId", "==", userId)
+    );
+    const reviewsSnap = await getDocs(reviewsQuery);
+    const reviews = reviewsSnap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    
+    // Durchschnittsbewertung und Level berechnen
+    let avgRating = 0;
+    if (reviews.length > 0) {
+      const totalRating = reviews.reduce((sum, review) => sum + review.rating, 0);
+      avgRating = totalRating / reviews.length;
+    }
+    
+    // Level-Fortschritt berechnen basierend auf abgeschlossenen Tasks
+    // Hier die Level-Logik anpassen nach deinem Gamification-System
+    const userLevels = [
+      { name: "Anfänger", minTasks: 0, minRating: 0 },
+      { name: "DoIt-Profi", minTasks: 3, minRating: 3 },
+      { name: "DoIt-Ninja", minTasks: 8, minRating: 3.5 },
+      { name: "Superheld:in", minTasks: 15, minRating: 4 }
+    ];
+    
+    // Aktuelles Level und Fortschritt bestimmen
+    let currentLevel = userLevels[0];
+    let nextLevel = userLevels[1];
+    
+    for (let i = 0; i < userLevels.length; i++) {
+      if (completedTasks.length >= userLevels[i].minTasks && 
+          avgRating >= userLevels[i].minRating) {
+        currentLevel = userLevels[i];
+        nextLevel = userLevels[i + 1] || userLevels[i];
+      } else {
+        break;
+      }
+    }
+    
+    // Fortschritt zum nächsten Level berechnen
+    let levelProgress = 0;
+    if (currentLevel !== nextLevel) {
+      const tasksNeeded = nextLevel.minTasks - currentLevel.minTasks;
+      const tasksCompleted = completedTasks.length - currentLevel.minTasks;
+      levelProgress = Math.min(100, Math.max(0, (tasksCompleted / tasksNeeded) * 100));
+    } else {
+      levelProgress = 100; // Maximales Level erreicht
+    }
+    
+    return {
+      userData: {
+        ...userData,
+        displayName: userData.displayName || 'Unbekannter Benutzer',
+        photoURL: userData.photoURL || userData.avatarUrl || userData.avatarBase64,
+        createdAt: userData.createdAt ? new Date(userData.createdAt.seconds * 1000) : new Date()
+      },
+      stats: {
+        completedTasks: completedTasks.length,
+        createdTasks: createdTasks.length,
+        totalReviews: reviews.length,
+        avgRating: parseFloat(avgRating.toFixed(1)),
+        currentLevel: currentLevel.name,
+        nextLevel: nextLevel.name === currentLevel.name ? null : nextLevel.name,
+        levelProgress: Math.round(levelProgress)
+      },
+      reviews: reviews.map(review => ({
+        id: review.id,
+        rating: review.rating,
+        content: review.content || review.text,
+        authorId: review.authorId || review.reviewerId,
+        taskId: review.taskId,
+        createdAt: review.createdAt ? new Date(review.createdAt.seconds * 1000) : new Date()
+      }))
+    };
+  } catch (error) {
+    console.error("Fehler beim Abrufen der Profilstatistiken:", error);
+    throw error;
+  }
+};
+```
+
+## 2. React-Komponente für das Nutzerprofil
+
+Jetzt erstellen wir eine verbesserte Profilkomponente:
+
+```tsx
+// In pages/profile/[userId].tsx oder components/profile/UserProfile.tsx
+
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
+import { useAuth } from '@/context/AuthContext';
+import { getUserProfileStats } from '@/lib/profileService';
+import { format } from 'date-fns';
+import { de } from 'date-fns/locale';
+import { ChevronLeft, Star, StarHalf, Clock, Task, Award } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { useToast } from '@/hooks/use-toast';
+
+export default function UserProfile() {
+  const router = useRouter();
+  const { userId } = router.query;
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [profileData, setProfileData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('reviews');
+  
+  useEffect(() => {
+    const fetchProfileData = async () => {
+      if (!userId) return;
+      
+      try {
+        setLoading(true);
+        const data = await getUserProfileStats(userId as string);
+        setProfileData(data);
+      } catch (error) {
+        console.error("Fehler beim Laden des Profils:", error);
+        toast({
+          title: "Fehler",
+          description: "Das Profil konnte nicht geladen werden",
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchProfileData();
+  }, [userId, toast]);
+  
+  // Helfer-Funktion für Sterne-Bewertungen
+  const RatingStars = ({ rating }: { rating: number }) => {
+    return (
+      <div className="flex items-center">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <span key={star}>
+            {star <= rating ? (
+              <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
+            ) : star - 0.5 <= rating ? (
+              <StarHalf className="w-5 h-5 fill-yellow-400 text-yellow-400" />
+            ) : (
+              <Star className="w-5 h-5 text-gray-300" />
+            )}
+          </span>
+        ))}
+      </div>
+    );
+  };
+  
+  // Zurück-Button
+  const handleBack = () => {
+    router.back();
+  };
+  
+  if (loading) {
+    return (
+      <div className="container max-w-md mx-auto p-4">
+        <div className="flex items-center mb-4">
+          <Button variant="ghost" size="icon" onClick={handleBack} className="mr-2">
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-xl font-semibold">Benutzerprofil</h1>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-6 mb-4">
+          <div className="flex flex-col items-center mb-4">
+            <Skeleton className="h-24 w-24 rounded-full" />
+            <Skeleton className="h-6 w-32 mt-4" />
+            <Skeleton className="h-4 w-48 mt-2" />
+          </div>
+          <div className="grid grid-cols-3 gap-4 mt-6">
+            <Skeleton className="h-16 rounded-md" />
+            <Skeleton className="h-16 rounded-md" />
+            <Skeleton className="h-16 rounded-md" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  if (!profileData) {
+    return (
+      <div className="container max-w-md mx-auto p-4">
+        <div className="flex items-center mb-4">
+          <Button variant="ghost" size="icon" onClick={handleBack} className="mr-2">
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-xl font-semibold">Benutzerprofil</h1>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <p className="text-center text-gray-500">Profil nicht gefunden</p>
+        </div>
+      </div>
+    );
+  }
+  
+  const { userData, stats, reviews } = profileData;
+  const isOwnProfile = user?.uid === userId;
+  
+  const getLevelBadgeColor = (level: string) => {
+    switch (level) {
+      case 'Anfänger': return 'bg-blue-100 text-blue-700';
+      case 'DoIt-Profi': return 'bg-green-100 text-green-700';
+      case 'DoIt-Ninja': return 'bg-purple-100 text-purple-700';
+      case 'Superheld:in': return 'bg-yellow-100 text-yellow-700';
+      default: return 'bg-gray-100 text-gray-700';
+    }
+  };
+  
+  return (
+    <div className="container max-w-md mx-auto p-4">
+      {/* Header mit Zurück-Button */}
+      <div className="flex items-center mb-4">
+        <Button variant="ghost" size="icon" onClick={handleBack} className="mr-2">
+          <ChevronLeft className="h-5 w-5" />
+        </Button>
+        <h1 className="text-xl font-semibold">Benutzerprofil</h1>
+      </div>
+      
+      {/* Profilkarte */}
+      <div className="bg-white rounded-xl shadow-sm p-6 mb-4">
+        {/* Profilbild und Name */}
+        <div className="flex flex-col items-center">
+          <Avatar className="h-24 w-24 border-2 border-white shadow-md">
+            <AvatarImage 
+              src={userData.photoURL} 
+              alt={userData.displayName}
+            />
+            <AvatarFallback>
+              {userData.displayName?.charAt(0) || 'U'}
+            </AvatarFallback>
+          </Avatar>
+          
+          <h2 className="text-xl font-bold mt-4">{userData.displayName}</h2>
+          
+          <div className="flex items-center mt-1 space-x-2">
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getLevelBadgeColor(stats.currentLevel)}`}>
+              {stats.currentLevel}
+            </span>
+            
+            <span className="text-sm text-gray-500">
+              Mitglied seit {userData.createdAt ? format(userData.createdAt, 'MMM yyyy', { locale: de }) : 'N/A'}
+            </span>
+          </div>
+        </div>
+        
+        {/* Statistiken */}
+        <div className="grid grid-cols-3 gap-4 mt-6 text-center">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-2xl font-bold text-indigo-600">{stats.completedTasks}</p>
+            <p className="text-xs text-gray-500 mt-1">Erledigt</p>
+          </div>
+          
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-2xl font-bold text-indigo-600">{stats.createdTasks}</p>
+            <p className="text-xs text-gray-500 mt-1">Erstellt</p>
+          </div>
+          
+          <div className="bg-gray-50 rounded-lg p-3">
+            <div className="flex items-center justify-center">
+              <p className="text-2xl font-bold text-indigo-600">{stats.avgRating}</p>
+              <Star className="h-4 w-4 ml-1 fill-yellow-400 text-yellow-400" />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">{stats.totalReviews} Bewertungen</p>
+          </div>
+        </div>
+        
+        {/* Level-Fortschritt */}
+        <div className="mt-6">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm font-medium text-gray-700">Level Fortschritt</span>
+            <span className="text-sm text-gray-600">{stats.levelProgress}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2.5">
+            <div 
+              className="bg-gradient-to-r from-indigo-500 to-purple-500 h-2.5 rounded-full" 
+              style={{ width: `${stats.levelProgress}%` }}
+            ></div>
+          </div>
+          {stats.nextLevel && (
+            <p className="text-xs text-gray-500 mt-1 text-right">
+              Nächstes Level: {stats.nextLevel}
+            </p>
+          )}
+        </div>
+      </div>
+      
+      {/* Tabs für Bewertungen und Aufgaben */}
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid grid-cols-2 bg-gray-100">
+            <TabsTrigger value="reviews" className="py-3">
+              <div className="flex items-center">
+                <Star className="w-4 h-4 mr-2" />
+                Bewertungen
+              </div>
+            </TabsTrigger>
+            <TabsTrigger value="tasks" className="py-3">
+              <div className="flex items-center">
+                <Task className="w-4 h-4 mr-2" />
+                Aufgaben
+              </div>
+            </TabsTrigger>
+          </TabsList>
+          
+          {/* Bewertungen Tab */}
+          <TabsContent value="reviews" className="p-4">
+            {reviews && reviews.length > 0 ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Bewertungen</h3>
+                  <span className="flex items-center">
+                    <span className="font-bold mr-1">{stats.avgRating}</span>
+                    <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
+                    <span className="text-sm text-gray-500 ml-1">({reviews.length})</span>
+                  </span>
+                </div>
+                
+                {reviews.map((review: any) => (
+                  <div key={review.id} className="border-b pb-4 last:border-b-0">
+                    <div className="flex items-center mb-2">
+                      <RatingStars rating={review.rating} />
+                      <span className="ml-2 text-sm text-gray-500">
+                        {review.createdAt ? format(review.createdAt, 'dd.MM.yyyy', { locale: de }) : 'N/A'}
+                      </span>
+                    </div>
+                    {review.content && (
+                      <p className="text-gray-700">{review.content}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Award className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-500">Keine Bewertungen vorhanden</p>
+              </div>
+            )}
+          </TabsContent>
+          
+          {/* Aufgaben Tab - Hier könntest du die erledigten/erstellten Aufgaben auflisten */}
+          <TabsContent value="tasks" className="p-4">
+            <div className="text-center py-8">
+              <Task className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">Aufgabenübersicht kommt bald</p>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+      
+      {/* Bearbeitungsbutton, falls eigenes Profil */}
+      {isOwnProfile && (
+        <div className="mt-4 flex justify-center">
+          <Button 
+            variant="outline" 
+            className="w-full"
+            onClick={() => router.push('/profile/edit')}
+          >
+            Profil bearbeiten
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## 3. CSS-Styling (falls erforderlich)
+
+Falls du Tailwind verwendest (wie im obigen Beispiel), solltest du keine zusätzlichen CSS-Definitionen benötigen. Falls du weitere Anpassungen benötigst, kann ein kleines Stylesheet hilfreich sein:
+
+```css
+/* styles/profile.module.css oder direkt in global.css */
+
+.levelBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.progressBar {
+  width: 100%;
+  height: 0.5rem;
+  background-color: #e5e7eb;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(to right, #6366f1, #a855f7);
+  transition: width 0.5s ease;
+}
+
+.reviewCard {
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+}
+
+.reviewCard:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+```
+
+## 4. Implementierung der Task-Ansicht (Erweiterung)
+
+Für eine vollständige Implementierung könntest du auch den Tasks-Tab ergänzen:
+
+```tsx
+// Erweitere die UserProfile-Komponente um eine Task-Liste:
+
+// Zusätzliche Funktionen im getUserProfileStats:
+const getUserCompletedTasks = async (userId: string) => {
+  const tasksRef = collection(db, "tasks");
+  const completedTasksQuery = query(
+    tasksRef,
+    where("taskerId", "==", userId),
+    where("status", "==", "completed"),
+    orderBy("completedAt", "desc"),
+    limit(5)
+  );
+  
+  const snap = await getDocs(completedTasksQuery);
+  return snap.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  }));
+};
+
+const getUserCreatedTasks = async (userId: string) => {
+  const tasksRef = collection(db, "tasks");
+  const createdTasksQuery = query(
+    tasksRef,
+    where("creatorId", "==", userId),
+    orderBy("createdAt", "desc"),
+    limit(5)
+  );
+  
+  const snap = await getDocs(createdTasksQuery);
+  return snap.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  }));
+};
+```
+
+Und dann im Tasks-Tab:
+
+```tsx
+<TabsContent value="tasks" className="p-4">
+  <div className="space-y-6">
+    {/* Erledigte Aufgaben */}
+    <div>
+      <h3 className="text-lg font-semibold mb-3">Erledigte Aufgaben</h3>
+      
+      {completedTasks && completedTasks.length > 0 ? (
+        <div className="space-y-3">
+          {completedTasks.map((task: any) => (
+            <div 
+              key={task.id} 
+              className="border rounded-lg p-3 hover:bg-gray-50 transition cursor-pointer"
+              onClick={() => router.push(`/tasks/${task.id}`)}
+            >
+              <h4 className="font-medium">{task.title}</h4>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-sm text-gray-500">
+                  {task.completedAt ? format(task.completedAt.toDate(), 'dd.MM.yyyy', { locale: de }) : 'N/A'}
+                </span>
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                  Erledigt
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-gray-500 text-center py-4">Keine erledigten Aufgaben</p>
+      )}
+    </div>
+    
+    {/* Erstellte Aufgaben */}
+    <div>
+      <h3 className="text-lg font-semibold mb-3">Erstellte Aufgaben</h3>
+      
+      {createdTasks && createdTasks.length > 0 ? (
+        <div className="space-y-3">
+          {createdTasks.map((task: any) => (
+            <div 
+              key={task.id} 
+              className="border rounded-lg p-3 hover:bg-gray-50 transition cursor-pointer"
+              onClick={() => router.push(`/tasks/${task.id}`)}
+            >
+              <h4 className="font-medium">{task.title}</h4>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-sm text-gray-500">
+                  {task.createdAt ? format(task.createdAt.toDate(), 'dd.MM.yyyy', { locale: de }) : 'N/A'}
+                </span>
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                  task.status === 'open' ? 'bg-blue-100 text-blue-700' :
+                  task.status === 'matched' ? 'bg-yellow-100 text-yellow-700' :
+                  task.status === 'completed' ? 'bg-green-100 text-green-700' :
+                  'bg-gray-100 text-gray-700'
+                }`}>
+                  {task.status === 'open' ? 'Offen' :
+                   task.status === 'matched' ? 'Zugewiesen' :
+                   task.status === 'completed' ? 'Abgeschlossen' :
+                   task.status}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-gray-500 text-center py-4">Keine erstellten Aufgaben</p>
+      )}
+    </div>
+  </div>
+</TabsContent>
+```
+
+## 5. Überprüfung der Firestore-Datenstruktur
+
+Um sicherzustellen, dass die Bewertungen und Aufgabenzahlen korrekt gespeichert werden, solltest du auch die Firestore-Struktur überprüfen:
+
+1. **Benutzer-Dokument** (in collection "users"):
+   - Sollte `completedTasks`, `postedTasks`, `rating` und `ratingCount` enthalten
+   - Diese Werte sollten bei jeder Aufgabenabschluss/Bewertung aktualisiert werden
+
+2. **Reviews-Collection**:
+   - Jedes Review sollte `userId` (für wen), `authorId` (von wem), `rating` und `content` enthalten
+   - Die Verknüpfung zum Task über `taskId`
+
+3. **Tasks-Collection**:
+   - Sollte `creatorId` und `taskerId` (wenn zugewiesen) enthalten
+   - Status-Feld mit Werten wie "open", "matched", "completed"
+   - Timestamps für `createdAt` und `completedAt`
+
+Mit diesen Implementierungen solltest du ein vollständiges, professionelles und funktionales Nutzerprofil haben, das Statistiken, Bewertungen und Aufgaben korrekt anzeigt.

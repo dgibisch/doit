@@ -1,0 +1,997 @@
+import { useState, useEffect } from 'react';
+import { useLocation } from 'wouter';
+import { useAuth } from '@/context/AuthContext';
+// Hinweis: Wir benötigen keine explizite User-Typimport, 
+// da wir nur die Properties des User-Objekts nutzen, die sicher in der AuthContext-Implementierung sind
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { 
+  MessageSquare, 
+  Users, 
+  Clock, 
+  Calendar, 
+  CheckCircle, 
+  XCircle, 
+  AlertCircle,
+  CheckCheck
+} from 'lucide-react';
+import TaskCard from '@/components/TaskCard';
+import { useToast } from '@/hooks/use-toast';
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  doc, 
+  getDoc,
+  orderBy
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+
+
+// Komponente für leere Listen
+const EmptyState = ({ 
+  title, 
+  message, 
+  action, 
+  actionText 
+}: { 
+  title: string; 
+  message: string; 
+  action?: () => void; 
+  actionText?: string;
+}) => (
+  <div className="flex flex-col items-center justify-center p-8 text-center rounded-lg bg-white shadow-sm">
+    <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+      <AlertCircle className="w-8 h-8 text-primary" />
+    </div>
+    <h3 className="text-lg font-medium mb-2">{title}</h3>
+    <p className="text-gray-500 mb-6">{message}</p>
+    {action && actionText && (
+      <Button onClick={action}>{actionText}</Button>
+    )}
+  </div>
+);
+
+// Loading-Skeleton für Tasks
+const TasksLoadingSkeleton = () => (
+  <div className="space-y-4">
+    {[1, 2, 3].map((i) => (
+      <div key={i} className="bg-white rounded-xl shadow-md overflow-hidden">
+        <div className="animate-pulse p-4">
+          <div className="h-32 bg-gray-200 rounded-lg mb-4"></div>
+          <div className="h-5 bg-gray-200 rounded w-3/4 mb-2"></div>
+          <div className="h-4 bg-gray-200 rounded w-1/2 mb-3"></div>
+          <div className="flex items-center justify-between">
+            <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+            <div className="h-10 bg-gray-200 rounded w-1/4"></div>
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
+export default function MyTasksScreen() {
+  const [activeTab, setActiveTab] = useState('created');
+  const [createdTasks, setCreatedTasks] = useState<any[]>([]);
+  const [appliedTasks, setAppliedTasks] = useState<any[]>([]);
+  const [completedTasks, setCompletedTasks] = useState<any[]>([]);
+  const [bookmarkedTasks, setBookmarkedTasks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  
+  useEffect(() => {
+    if (user) {
+      fetchTasks();
+    }
+  }, [user, activeTab]);
+
+  const fetchTasks = async () => {
+    if (!user) return;
+    
+    setLoading(true);
+    
+    console.log("Fetching tasks for tab:", activeTab);
+    console.log("Current user:", user);
+    
+    try {
+      if (activeTab === 'bookmarked') {
+        // Gemerkte Aufgaben abrufen (direkte Implementierung)
+        console.log("Lade gemerkte Aufgaben...");
+        
+        // Benutzerprofile können entweder in der users oder userProfiles-Sammlung gespeichert sein
+        console.log("Benutzer-ID für Bookmarks:", user.id);
+        
+        // Zuerst in users-Collection suchen
+        let userProfileSnap = await getDoc(doc(db, "users", user.id));
+        
+        // Falls nicht in users, dann in userProfiles-Collection suchen
+        if (!userProfileSnap.exists()) {
+          console.log("Kein Profil in users Collection gefunden, prüfe in userProfiles");
+          userProfileSnap = await getDoc(doc(db, "userProfiles", user.id));
+        }
+        
+        if (!userProfileSnap.exists()) {
+          console.log("Benutzer-Profil in keiner Collection gefunden");
+          setBookmarkedTasks([]);
+          setLoading(false);
+          return;
+        }
+        
+        const userProfileData = userProfileSnap.data();
+        console.log("Benutzerprofil geladen:", userProfileData);
+        
+        // Gemerkte Aufgaben-IDs extrahieren
+        const bookmarkedTaskIds = userProfileData.bookmarkedTasks || [];
+        console.log(`Gefundene Lesezeichen: ${bookmarkedTaskIds.length}`, bookmarkedTaskIds);
+        
+        if (bookmarkedTaskIds.length === 0) {
+          setBookmarkedTasks([]);
+          setLoading(false);
+          return;
+        }
+        
+        // Gemerkte Aufgaben abrufen
+        const bookmarkedTasksData = await Promise.all(
+          bookmarkedTaskIds.map(async (taskId: string) => {
+            try {
+              const taskDoc = await getDoc(doc(db, "tasks", taskId));
+              if (!taskDoc.exists()) {
+                console.log(`Task ${taskId} existiert nicht mehr`);
+                return null;
+              }
+              
+              const taskData = taskDoc.data();
+              
+              // Benutzerprofil des Erstellers abrufen - zuerst in users, dann in userProfiles
+              let creatorProfileSnap = await getDoc(doc(db, "users", taskData.creatorId));
+              if (!creatorProfileSnap.exists()) {
+                creatorProfileSnap = await getDoc(doc(db, "userProfiles", taskData.creatorId));
+              }
+              const creatorData = creatorProfileSnap.exists() ? creatorProfileSnap.data() : {};
+              
+              return {
+                id: taskId,
+                ...taskData,
+                creatorName: creatorData.displayName || taskData.creatorName || 'Unbekannt',
+                creatorPhotoURL: creatorData.photoURL || taskData.creatorPhotoURL,
+                distance: Math.round(Math.random() * 50) / 10, // Mock-Distanz für Testzwecke
+                timeInfo: taskData.timeInfo || {
+                  isFlexible: true,
+                  displayText: 'Zeitlich flexibel'
+                }
+              };
+            } catch (error) {
+              console.error(`Fehler beim Laden der Aufgabe ${taskId}:`, error);
+              return null;
+            }
+          })
+        );
+        
+        // Nur gültige Aufgaben anzeigen
+        const validBookmarkedTasks = bookmarkedTasksData.filter(Boolean);
+        console.log(`${validBookmarkedTasks.length} gültige gemerkte Aufgaben geladen`);
+        
+        setBookmarkedTasks(validBookmarkedTasks);
+      }
+      else if (activeTab === 'created') {
+        // ANFORDERUNG: Zeige alle Tasks, bei denen task.creatorId === currentUserId
+        // UND status === 'open' ODER status === 'assigned'
+        
+        console.log("Benutzer-ID für erstellte Aufgaben:", user.id);
+        
+        try {
+          // Eine einfache Abfrage ohne orderBy, nur nach creatorId filtern
+          const createdTasksQuery = query(
+            collection(db, "tasks"),
+            where("creatorId", "==", user.id)
+          );
+          
+          // Abfrage ausführen
+          const createdTasksSnapshot = await getDocs(createdTasksQuery);
+          
+          console.log(`Einfache Abfrage hat ${createdTasksSnapshot.docs.length} Tasks gefunden`);
+          
+          // Alle Tasks filtern, die entweder "open" oder "assigned" sind
+          const filteredDocs = createdTasksSnapshot.docs.filter(
+            doc => doc.data().status === "open" || doc.data().status === "assigned"
+          );
+          
+          // Nach createdAt sortieren (manuell in JavaScript)
+          filteredDocs.sort((a, b) => {
+            const dateA = a.data().createdAt ? a.data().createdAt.toDate().getTime() : 0;
+            const dateB = b.data().createdAt ? b.data().createdAt.toDate().getTime() : 0;
+            return dateB - dateA; // Absteigend sortieren
+          });
+          
+          console.log(`Gefundene erstellte Aufgaben nach JS-Filterung: ${filteredDocs.length}`, {
+            creatorId: user.id
+          });
+          
+          // Aufgabendaten mit Bewerbungsinformationen abrufen
+          const tasksData = await Promise.all(filteredDocs.map(async (docSnapshot: any) => {
+            const taskData = docSnapshot.data();
+            const taskId = docSnapshot.id;
+            
+            // Bewerbungen für diese Aufgabe abrufen
+            const applicationsQuery = query(
+              collection(db, "applications"),
+              where("taskId", "==", taskId)
+            );
+            const applicationsSnapshot = await getDocs(applicationsQuery);
+            
+            // Bewerbungen in das erwartete Format umwandeln
+            const applications = applicationsSnapshot.docs.map(appDoc => {
+              const appData = appDoc.data();
+              return {
+                userId: appData.applicantId,
+                isAccepted: appData.isAccepted || false,
+                isRejected: appData.isRejected || false,
+                chatId: appData.chatId || null
+              };
+            });
+            
+            // Chats für diese Aufgabe (Bewerbungschats) abrufen
+            const chatsQuery = query(
+              collection(db, "chats"),
+              where("taskId", "==", taskId),
+              where("isTaskApplicationChat", "==", true)
+            );
+            const chatsSnapshot = await getDocs(chatsQuery);
+            
+            // Chat-Informationen mit Status zusammenführen
+            const applicantChats = await Promise.all(chatsSnapshot.docs.map(async chatDoc => {
+              const chatData = chatDoc.data();
+              
+              return {
+                id: chatDoc.id,
+                applicantId: chatData.applicantId,
+                applicantName: chatData.participantNames?.[chatData.applicantId] || 'Unbekannt',
+                applicantAvatar: chatData.participantAvatars?.[chatData.applicantId] || '',
+                isSelected: chatData.isSelected || false,
+                isRejected: chatData.isRejected || false,
+                isConfirmedByApplicant: chatData.isConfirmedByApplicant || false,
+                applicationId: chatData.applicationId,
+                message: chatData.applicationMessage || ''
+              };
+            }));
+            
+            let assignedUserId = null;
+            // Falls ein Bewerber ausgewählt wurde, ist das der zugewiesene Benutzer
+            const selectedApplicant = applicantChats.find(chat => chat.isSelected);
+            if (selectedApplicant) {
+              assignedUserId = selectedApplicant.applicantId;
+            }
+            
+            return {
+              id: taskId,
+              ...taskData,
+              ownerId: taskData.creatorId, // Für Konsistenz mit den Anforderungen
+              applications: applications,
+              applicationsCount: applicationsSnapshot.size,
+              applicantChats: applicantChats,
+              assignedUserId: assignedUserId,
+              // Weitere nützliche Informationen
+              timeInfo: taskData.timeInfo || { 
+                isFlexible: true, 
+                displayText: 'Zeitlich flexibel' 
+              }
+            };
+          }));
+          
+          setCreatedTasks(tasksData);
+        } catch (error) {
+          console.error("Fehler beim Laden der erstellten Aufgaben:", error);
+          toast({
+            title: "Fehler",
+            description: "Die erstellten Aufgaben konnten nicht geladen werden.",
+            variant: "destructive"
+          });
+          setCreatedTasks([]);
+        }
+      } 
+      else if (activeTab === 'applied') {
+        // ANFORDERUNG: Zeige Tasks, bei denen currentUserId sich beworben hat
+        // Zeige Status: offen, abgelehnt, angenommen
+        
+        // Zuerst alle Bewerbungen des aktuellen Benutzers abrufen
+        const applicationsQuery = query(
+          collection(db, "applications"),
+          where("applicantId", "==", user.id)
+        );
+        
+        const applicationsSnapshot = await getDocs(applicationsQuery);
+        console.log(`Gefundene Bewerbungen: ${applicationsSnapshot.docs.length}`);
+        
+        if (applicationsSnapshot.empty) {
+          setAppliedTasks([]);
+          setLoading(false);
+          return;
+        }
+        
+        // Aufgaben-IDs extrahieren
+        const taskIds = applicationsSnapshot.docs.map(doc => doc.data().taskId);
+        
+        // Für jede Task-ID die zugehörige Aufgabe und Chat abrufen
+        const tasksData = await Promise.all(
+          taskIds.map(async (taskId) => {
+            const taskDoc = await getDoc(doc(db, "tasks", taskId));
+            
+            if (!taskDoc.exists()) {
+              console.log(`Task ${taskId} existiert nicht mehr`);
+              return null;
+            }
+            
+            const taskData = taskDoc.data();
+            
+            // Die Bewerbung des Benutzers finden
+            const application = applicationsSnapshot.docs.find(
+              doc => doc.data().taskId === taskId
+            );
+            
+            if (!application) {
+              console.log(`Keine Bewerbung gefunden für Task ${taskId}`);
+              return null;
+            }
+            
+            const applicationData = application.data();
+            
+            // Den zugehörigen Chat finden
+            const chatQuery = query(
+              collection(db, "chats"),
+              where("taskId", "==", taskId),
+              where("applicantId", "==", user.id),
+              where("isTaskApplicationChat", "==", true)
+            );
+            
+            const chatSnapshot = await getDocs(chatQuery);
+            let chatId = null;
+            let applicationStatus = 'pending';
+            
+            if (!chatSnapshot.empty) {
+              const chatData = chatSnapshot.docs[0].data();
+              chatId = chatSnapshot.docs[0].id;
+              applicationStatus = chatData.isSelected ? 'accepted' : (chatData.isRejected ? 'rejected' : 'pending');
+            }
+            
+            return {
+              id: taskId,
+              ...taskData,
+              ownerId: taskData.creatorId,
+              chatId: chatId,
+              applicationStatus: applicationStatus,
+              isAccepted: applicationData.isAccepted || false,
+              isRejected: applicationData.isRejected || false,
+              // Weitere nützliche Informationen
+              timeInfo: taskData.timeInfo || { 
+                isFlexible: true, 
+                displayText: 'Zeitlich flexibel' 
+              },
+            };
+          })
+        );
+        
+        setAppliedTasks(tasksData.filter(Boolean));
+      } 
+      else if (activeTab === 'completed') {
+        // ANFORDERUNG: Zeige alle Tasks mit status === done, wenn:
+        // task.creatorId === currentUserId oder
+        // currentUserId === task.assignedUserId
+        
+        console.log("Lade abgeschlossene Aufgaben...");
+        
+        // Abgeschlossene Aufgaben des aktuellen Benutzers
+        const completedCreatedTasksQuery = query(
+          collection(db, "tasks"),
+          where("creatorId", "==", user.id),
+          where("status", "==", "done")
+        );
+        
+        // Zweite Abfrage für Aufgaben, deren Status "completed" ist (andere Schreibweise)
+        const completedCreatedTasksQuery2 = query(
+          collection(db, "tasks"),
+          where("creatorId", "==", user.id),
+          where("status", "==", "completed")
+        );
+        
+        // Jetzt müssen wir auch abgeschlossene Aufgaben finden, bei denen der Benutzer ausgewählt wurde
+        // d.h. er ist nicht der Ersteller, aber assignedUserId = user.id
+        const completedAssignedTasksQuery = query(
+          collection(db, "chats"),
+          where("applicantId", "==", user.id),
+          where("isSelected", "==", true)
+        );
+        
+        // Alle Abfragen ausführen
+        const [createdSnapshot1, createdSnapshot2, assignedChatsSnapshot] = await Promise.all([
+          getDocs(completedCreatedTasksQuery),
+          getDocs(completedCreatedTasksQuery2),
+          getDocs(completedAssignedTasksQuery)
+        ]);
+        
+        // Ergebnisse der eigen erstellten Aufgaben zusammenführen
+        const allCreatedCompletedDocs = [...createdSnapshot1.docs, ...createdSnapshot2.docs];
+        
+        // Jetzt die Tasks finden, bei denen der Benutzer als Bewerber ausgewählt wurde
+        const assignedTaskIds = assignedChatsSnapshot.docs.map(doc => doc.data().taskId);
+        const assignedTasksPromises = assignedTaskIds.map(async taskId => {
+          const taskDoc = await getDoc(doc(db, "tasks", taskId));
+          
+          if (!taskDoc.exists()) {
+            return null;
+          }
+          
+          const taskData = taskDoc.data();
+          
+          // Nur abgeschlossene Aufgaben berücksichtigen
+          if (taskData.status !== 'done' && taskData.status !== 'completed') {
+            return null;
+          }
+          
+          return {
+            docSnapshot: taskDoc,
+            chatId: assignedChatsSnapshot.docs.find(doc => doc.data().taskId === taskId)?.id || null
+          };
+        });
+        
+        const assignedTasksResults = await Promise.all(assignedTasksPromises);
+        
+        // Zusammenführen aller abgeschlossenen Aufgaben (erstellt und zugewiesen)
+        console.log(`Gefundene abgeschlossene Aufgaben: erstellt=${allCreatedCompletedDocs.length}, zugewiesen=${assignedTasksResults.filter(Boolean).length}`);
+        
+        // Zunächst die erstellten abgeschlossenen Aufgaben verarbeiten
+        const createdCompletedTasks = await Promise.all(
+          allCreatedCompletedDocs.map(async (docSnapshot: any) => {
+            const taskData = docSnapshot.data();
+            const taskId = docSnapshot.id;
+            const isOwner = taskData.creatorId === user.id;
+            
+            // Falls der Benutzer nicht der Ersteller ist, prüfen ob er der Ausgewählte ist
+            if (!isOwner) {
+              // Chat finden, in dem der Benutzer der ausgewählte Bewerber ist
+              const assignedChatQuery = query(
+                collection(db, "chats"),
+                where("taskId", "==", taskId),
+                where("applicantId", "==", user.id),
+                where("isSelected", "==", true)
+              );
+              
+              const assignedChatSnapshot = await getDocs(assignedChatQuery);
+              
+              // Wenn kein Chat gefunden wurde, in dem der Benutzer ausgewählt ist, 
+              // ist diese Aufgabe nicht relevant
+              if (assignedChatSnapshot.empty) {
+                return null;
+              }
+              
+              // Chat-Informationen abrufen
+              const chatData = assignedChatSnapshot.docs[0].data();
+              
+              return {
+                id: taskId,
+                ...taskData,
+                ownerId: taskData.creatorId,
+                isAssigned: true,
+                chatId: assignedChatSnapshot.docs[0].id,
+                type: 'assigned',
+                timeInfo: taskData.timeInfo || { 
+                  isFlexible: true, 
+                  displayText: 'Zeitlich flexibel' 
+                },
+              };
+            }
+            
+            // Falls der Benutzer der Ersteller ist
+            // Den ausgewählten Bewerber finden, falls vorhanden
+            const selectedChatQuery = query(
+              collection(db, "chats"),
+              where("taskId", "==", taskId),
+              where("isTaskApplicationChat", "==", true),
+              where("isSelected", "==", true)
+            );
+            
+            const selectedChatSnapshot = await getDocs(selectedChatQuery);
+            
+            let selectedApplicant = null;
+            if (!selectedChatSnapshot.empty) {
+              const chatData = selectedChatSnapshot.docs[0].data();
+              selectedApplicant = {
+                id: chatData.applicantId,
+                name: chatData.participantNames?.[chatData.applicantId] || 'Unbekannt',
+                avatar: chatData.participantAvatars?.[chatData.applicantId] || '',
+                chatId: selectedChatSnapshot.docs[0].id
+              };
+            }
+            
+            return {
+              id: taskId,
+              ...taskData,
+              ownerId: taskData.creatorId,
+              assignedUserId: selectedApplicant?.id || null,
+              selectedApplicant,
+              type: 'created',
+              timeInfo: taskData.timeInfo || { 
+                isFlexible: true, 
+                displayText: 'Zeitlich flexibel' 
+              },
+            };
+          })
+        );
+        
+        // Jetzt die Aufgaben verarbeiten, bei denen der Benutzer der ausgewählte Bewerber ist
+        const assignedCompletedTasks = await Promise.all(
+          assignedTasksResults.filter(Boolean).map(async (result: any) => {
+            if (!result) return null;
+            
+            const taskDoc = result.docSnapshot;
+            const taskData = taskDoc.data();
+            const taskId = taskDoc.id;
+            const chatId = result.chatId;
+            
+            // Chat-Daten abrufen
+            const chatDoc = await getDoc(doc(db, "chats", chatId));
+            if (!chatDoc.exists()) return null;
+            
+            const chatData = chatDoc.data();
+            
+            return {
+              id: taskId,
+              ...taskData,
+              ownerId: taskData.creatorId,
+              isAssigned: true,
+              chatId: chatId,
+              type: 'assigned',
+              timeInfo: taskData.timeInfo || { 
+                isFlexible: true, 
+                displayText: 'Zeitlich flexibel' 
+              },
+            };
+          })
+        );
+        
+        // Alle abgeschlossenen Aufgaben zusammenführen
+        const allCompletedTasks = [
+          ...createdCompletedTasks.filter(Boolean),
+          ...assignedCompletedTasks.filter(Boolean)
+        ];
+        
+        setCompletedTasks(allCompletedTasks);
+        
+        console.log("Abgeschlossene Aufgaben:", {
+          erstellt: createdCompletedTasks.filter(Boolean).length,
+          zugewiesen: assignedCompletedTasks.filter(Boolean).length,
+          total: allCompletedTasks.length,
+          tasks: allCompletedTasks
+        });
+      }
+    } catch (error) {
+      console.error("Fehler beim Laden der Aufgaben:", error);
+      toast({
+        title: "Fehler",
+        description: "Die Aufgaben konnten nicht geladen werden. Bitte versuche es erneut.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenChat = (chatId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (chatId) {
+      setLocation(`/chat/${chatId}`);
+    }
+  };
+
+  // Rendering der drei Tabs
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="sticky top-0 z-10 bg-white shadow-md">
+        <div className="px-4 py-4 flex items-center">
+          <h1 className="text-xl font-bold">Meine Aufgaben</h1>
+        </div>
+        
+        {/* Tab-Navigation */}
+        <Tabs defaultValue="created" onValueChange={setActiveTab}>
+          <TabsList className="w-full grid grid-cols-4">
+            <TabsTrigger value="created">Erstellt</TabsTrigger>
+            <TabsTrigger value="applied">Beworben</TabsTrigger>
+            <TabsTrigger value="completed">Abgeschlossen</TabsTrigger>
+            <TabsTrigger value="bookmarked">Gemerkte</TabsTrigger>
+          </TabsList>
+          
+          {/* Tab: Erstellte Aufgaben */}
+          <TabsContent value="created">
+            <div className="p-4">
+              {loading ? (
+                <TasksLoadingSkeleton />
+              ) : createdTasks.length > 0 ? (
+                <div className="space-y-4">
+                  {createdTasks.map(task => (
+                    <div key={task.id} className="bg-white rounded-xl shadow-md overflow-hidden flex flex-col">
+                      {/* Bild und Hauptinformationen */}
+                      <TaskCard
+                        key={task.id}
+                        id={task.id}
+                        title={task.title}
+                        description={task.description}
+                        category={task.category}
+                        creatorName={task.creatorName || user?.name || ''}
+                        creatorId={task.creatorId || user?.id || ''}
+                        creatorPhotoURL={task.creatorPhotoURL || user?.photoURL}
+                        createdAt={task.createdAt}
+                        distance={task.distance || 0}
+                        imageUrl={task.imageUrl}
+                        imageUrls={task.imageUrls}
+                        price={task.price || 0}
+                        commentCount={task.commentCount || 0}
+                        applicantsCount={task.applications?.length || 0}
+                        status={task.status || 'open'}
+                        timeInfo={task.timeInfo}
+                        mode="myTasks"
+                        onEditClick={(id) => setLocation(`/edit-task/${id}`)}
+                      />
+                      
+                      {/* Bewerber-Übersicht */}
+                      {task.applicantChats && task.applicantChats.length > 0 && (
+                        <div className="px-4 py-3 border-t border-gray-100">
+                          <div className="flex items-center mb-2">
+                            <Users className="w-5 h-5 text-gray-500 mr-2" />
+                            <h3 className="font-medium">Bewerbungen ({task.applicantChats.length})</h3>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            {task.applicantChats.map((chat: any) => (
+                              <div 
+                                key={chat.id} 
+                                className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-50 transition-colors"
+                                onClick={(e) => handleOpenChat(chat.id, e)}
+                              >
+                                <div className="flex items-center">
+                                  <Avatar className="h-8 w-8 mr-2">
+                                    <AvatarImage src={chat.applicantAvatar} alt={chat.applicantName} />
+                                    <AvatarFallback>{chat.applicantName?.[0]?.toUpperCase() || '?'}</AvatarFallback>
+                                  </Avatar>
+                                  <div>
+                                    <div className="font-medium text-sm">{chat.applicantName}</div>
+                                    <div className="text-xs text-gray-500 truncate max-w-[150px]">{chat.message}</div>
+                                  </div>
+                                </div>
+                                
+                                <div className="flex items-center gap-2">
+                                  {chat.isSelected ? (
+                                    <Badge className="bg-green-100 text-green-800 hover:bg-green-200">
+                                      Zugesagt
+                                    </Badge>
+                                  ) : chat.isRejected ? (
+                                    <Badge className="bg-red-100 text-red-800 hover:bg-red-200">
+                                      Abgelehnt
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200">
+                                      Offen
+                                    </Badge>
+                                  )}
+                                  
+                                  <Button 
+                                    size="sm" 
+                                    variant="ghost"
+                                    className="ml-2"
+                                    onClick={(e) => handleOpenChat(chat.id, e)}
+                                  >
+                                    <MessageSquare className="h-4 w-4 mr-1" />
+                                    Chat
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Aktionen */}
+                      <div className="px-4 py-3 bg-gray-50 flex justify-between items-center">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setLocation(`/task/${task.id}`)}
+                        >
+                          Details anzeigen
+                        </Button>
+                        
+                        {task.status !== 'done' && task.status !== 'completed' && (
+                          <Button 
+                            variant="default" 
+                            onClick={() => setLocation(`/edit-task/${task.id}`)}
+                          >
+                            Bearbeiten
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState 
+                  title="Keine erstellten Aufgaben"
+                  message="Erstelle deine erste Aufgabe und lasse dir von deinen Nachbarn helfen"
+                  action={() => setLocation('/create-task')}
+                  actionText="Aufgabe erstellen"
+                />
+              )}
+            </div>
+          </TabsContent>
+          
+          {/* Tab: Beworbene Aufgaben */}
+          <TabsContent value="applied">
+            <div className="p-4">
+              {loading ? (
+                <TasksLoadingSkeleton />
+              ) : appliedTasks.length > 0 ? (
+                <div className="space-y-4">
+                  {appliedTasks.map(task => (
+                    <div key={task.id} className="bg-white rounded-xl shadow-md overflow-hidden flex flex-col">
+                      {/* Aufgabeninformation */}
+                      <TaskCard
+                        key={task.id}
+                        id={task.id}
+                        title={task.title}
+                        description={task.description}
+                        category={task.category}
+                        creatorName={task.creatorName || ''}
+                        creatorId={task.creatorId || ''}
+                        creatorPhotoURL={task.creatorPhotoURL}
+                        createdAt={task.createdAt}
+                        distance={task.distance || 0}
+                        imageUrl={task.imageUrl}
+                        imageUrls={task.imageUrls}
+                        price={task.price || 0}
+                        status={task.status || 'open'}
+                        timeInfo={task.timeInfo}
+                        mode="applications"
+                      />
+                      
+                      {/* Bewerbungsstatus */}
+                      <div className="px-4 py-3 border-t border-gray-100">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-medium mr-2">Bewerbungsstatus:</h3>
+                          
+                          {task.applicationStatus === 'accepted' || task.isAccepted ? (
+                            <Badge className="bg-green-100 text-green-800 flex items-center">
+                              <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                              Zugesagt
+                            </Badge>
+                          ) : task.applicationStatus === 'rejected' || task.isRejected ? (
+                            <Badge className="bg-red-100 text-red-800 flex items-center">
+                              <XCircle className="w-3.5 h-3.5 mr-1" />
+                              Abgelehnt
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-yellow-100 text-yellow-800 flex items-center">
+                              <Clock className="w-3.5 h-3.5 mr-1" />
+                              Warte auf Antwort
+                            </Badge>
+                          )}
+                        </div>
+                        
+                        {/* Zeitinformationen */}
+                        {task.timeInfo && (
+                          <div className="mt-2 text-sm text-gray-600 flex items-center">
+                            <Calendar className="w-4 h-4 mr-1" />
+                            {task.timeInfo.displayText}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Aktionen */}
+                      <div className="px-4 py-3 bg-gray-50 flex justify-between items-center">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setLocation(`/task/${task.id}`)}
+                        >
+                          Details anzeigen
+                        </Button>
+                        
+                        {task.chatId && (
+                          <Button 
+                            variant="default" 
+                            onClick={() => handleOpenChat(task.chatId)}
+                          >
+                            <MessageSquare className="w-4 h-4 mr-2" />
+                            Chat öffnen
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState 
+                  title="Keine Bewerbungen"
+                  message="Du hast dich noch auf keine Aufgaben beworben"
+                  action={() => setLocation('/tasks')}
+                  actionText="Aufgaben entdecken"
+                />
+              )}
+            </div>
+          </TabsContent>
+          
+          {/* Tab: Abgeschlossene Aufgaben */}
+          <TabsContent value="completed">
+            <div className="p-4">
+              {loading ? (
+                <TasksLoadingSkeleton />
+              ) : completedTasks.length > 0 ? (
+                <div className="space-y-4">
+                  {completedTasks.map(task => (
+                    <div key={task.id} className="bg-white rounded-xl shadow-md overflow-hidden flex flex-col">
+                      {/* Aufgabeninformation */}
+                      <TaskCard
+                        key={task.id}
+                        id={task.id}
+                        title={task.title}
+                        description={task.description}
+                        category={task.category}
+                        creatorName={task.creatorName || ''}
+                        creatorId={task.creatorId || ''}
+                        creatorPhotoURL={task.creatorPhotoURL}
+                        createdAt={task.createdAt}
+                        distance={task.distance || 0}
+                        imageUrl={task.imageUrl}
+                        imageUrls={task.imageUrls}
+                        price={task.price || 0}
+                        status="done"
+                        timeInfo={task.timeInfo}
+                        mode="dashboard"
+                      />
+                      
+                      {/* Zusätzliche Infos */}
+                      <div className="px-4 py-3 border-t border-gray-100">
+                        <div className="flex flex-wrap items-center">
+                          <Badge className="bg-green-100 text-green-800 flex items-center">
+                            <CheckCheck className="w-3.5 h-3.5 mr-1" />
+                            Abgeschlossen
+                          </Badge>
+                          
+                          <div className="ml-auto text-sm text-gray-600">
+                            {task.type === 'created' ? (
+                              <div className="flex items-center">
+                                <span className="mr-2">Helfer:</span>
+                                {task.selectedApplicant ? (
+                                  <div className="flex items-center">
+                                    <Avatar className="h-6 w-6 mr-1">
+                                      <AvatarImage src={task.selectedApplicant.avatar} />
+                                      <AvatarFallback>{task.selectedApplicant.name[0]}</AvatarFallback>
+                                    </Avatar>
+                                    <span>{task.selectedApplicant.name}</span>
+                                  </div>
+                                ) : (
+                                  <span>Keine Information</span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center">
+                                <span className="mr-2">Erstellt von:</span>
+                                <Avatar className="h-6 w-6 mr-1">
+                                  <AvatarImage src={task.creatorPhotoURL} />
+                                  <AvatarFallback>{task.creatorName?.[0] || '?'}</AvatarFallback>
+                                </Avatar>
+                                <span>{task.creatorName}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Aktionen */}
+                      <div className="px-4 py-3 bg-gray-50 flex justify-between items-center">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setLocation(`/task/${task.id}`)}
+                        >
+                          Details anzeigen
+                        </Button>
+                        
+                        {task.chatId && (
+                          <Button 
+                            variant="default" 
+                            onClick={() => handleOpenChat(task.chatId)}
+                          >
+                            <MessageSquare className="w-4 h-4 mr-2" />
+                            Chat öffnen
+                          </Button>
+                        )}
+                        
+                        {task.selectedApplicant && task.selectedApplicant.chatId && (
+                          <Button 
+                            variant="default" 
+                            onClick={() => handleOpenChat(task.selectedApplicant.chatId)}
+                          >
+                            <MessageSquare className="w-4 h-4 mr-2" />
+                            Chat öffnen
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState 
+                  title="Keine abgeschlossenen Aufgaben"
+                  message="Sobald du eine Aufgabe abgeschlossen hast, wird sie hier angezeigt"
+                  action={() => setLocation('/tasks')}
+                  actionText="Aufgaben entdecken"
+                />
+              )}
+            </div>
+          </TabsContent>
+          
+          {/* Tab: Gemerkte Aufgaben */}
+          <TabsContent value="bookmarked">
+            <div className="p-4">
+              {loading ? (
+                <TasksLoadingSkeleton />
+              ) : bookmarkedTasks.length > 0 ? (
+                <div className="space-y-4">
+                  {bookmarkedTasks.map(task => (
+                    <div key={task.id} className="bg-white rounded-xl shadow-md overflow-hidden flex flex-col">
+                      {/* Aufgabeninformation */}
+                      <TaskCard
+                        key={task.id}
+                        id={task.id}
+                        title={task.title}
+                        description={task.description}
+                        category={task.category}
+                        creatorName={task.creatorName || ''}
+                        creatorId={task.creatorId || ''}
+                        creatorPhotoURL={task.creatorPhotoURL}
+                        createdAt={task.createdAt}
+                        distance={task.distance || 0}
+                        imageUrl={task.imageUrl}
+                        imageUrls={task.imageUrls}
+                        price={task.price || 0}
+                        status={task.status || 'open'}
+                        timeInfo={task.timeInfo}
+                        mode="saved"
+                      />
+                      
+                      {/* Aktionen */}
+                      <div className="px-4 py-3 bg-gray-50 flex justify-between items-center">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setLocation(`/task/${task.id}`)}
+                        >
+                          Details anzeigen
+                        </Button>
+                        
+                        {task.status === 'open' && user && task.creatorId !== user.id && (
+                          <Button 
+                            variant="default" 
+                            onClick={() => setLocation(`/apply/${task.id}`)}
+                          >
+                            Bewerben
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState 
+                  title="Keine gemerkten Aufgaben"
+                  message="Du hast noch keine Aufgaben in deinen Favoriten gespeichert. Klicke auf das Lesezeichen-Symbol, um Aufgaben zu speichern."
+                  action={() => setLocation('/tasks')}
+                  actionText="Aufgaben entdecken"
+                />
+              )}
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}

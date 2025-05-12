@@ -1,0 +1,66 @@
+Erstelle mir bitte eine mobile Web-App namens **DoIt** in React mit Firebase als Backend. Die App ist für Nachbarschafts-Tasks gedacht und soll folgende Funktionen enthalten:
+
+🧩 GRUNDKONZEPT:
+- Jeder Nutzer kann Aufgaben einstellen (mit Titel, Beschreibung, Foto, Kategorie, Standort)
+- Andere Nutzer („Tasker“) können sich darauf bewerben mit kurzer Nachricht und Preis
+- Nach Bestätigung der Bewerbung wird die Aufgabe geschlossen und der Standort freigegeben
+- Aufgaben können später reaktiviert werden
+- Bezahlung erfolgt **nicht über die App**, sondern bar vor Ort
+
+📱 MOBIL ONLY:
+- Das Design soll verspielt und farbenfroh sein (ähnlich wie LINE oder KakaoTalk)
+- Tailwind CSS oder vergleichbar verwenden
+- Alles mobile-first, kein Desktop-Modus notwendig
+
+🔐 AUTHENTIFIZIERUNG:
+- Firebase Auth verwenden
+- Login mit Google, Facebook, LINE (optional), sowie klassisch mit Email & Passwort
+
+👤 USER-PROFIL:
+- Jeder User kann:
+  - Aufgaben posten
+  - Aufgaben erledigen
+  - Skills im Profil angeben (z. B. Handwerk, Putzen)
+  - Standort setzen (für Umkreissuche)
+  - Bewertungen erhalten (1–5 Sterne + Text)
+  - „Level“ aufsteigen, z. B. durch erledigte Aufgaben + gute Bewertungen
+- Levelnamen sollen spielerisch sein, z. B. „Task-Küken“, „DoIt-Ninja“, „Superheld:in“
+
+🗺️ AUFGABENFUNKTION:
+- User kann Aufgaben mit Titel, Beschreibung, Foto und Kategorie posten
+- Standort mit Google Maps API auswählen (Speichern von lat/lng)
+- Ort ist nur sichtbar nach erfolgreichem Match
+
+🔍 EXPLORE-FUNKTION:
+- Nutzer sehen Aufgaben aus ihrem Umkreis (Geofilter)
+- Kategorie-Filter (z. B. nur Handwerk anzeigen)
+- Bewerben durch kurze Nachricht + Preisvorschlag
+
+💬 CHAT-FUNKTION:
+- Nach Bewerbung können User miteinander chatten
+- Echtzeit-Chat mit Firebase Realtime DB oder Firestore Subcollections
+
+📋 BEWERBUNGSÜBERSICHT:
+- Auftraggeber sieht alle Bewerber inkl.:
+  - Profilbild, Sternebewertung, Preisangebot
+- Kann einen Bewerber auswählen → Aufgabe wird abgeschlossen
+- Option: Aufgabe „reaktivieren“ im eigenen Profil
+
+🏆 GAMIFICATION:
+- Levelsystem (mit lustigen Rängen)
+- Fortschritt basiert auf erledigten Aufgaben + Bewertung
+
+📂 DATENSTRUKTUR (Firebase Firestore):
+- `users`: Name, E-Mail, Skills, Standort, Rating, Level
+- `tasks`: Titel, Beschreibung, Kategorie, Ort, Bild, Bewerber, Status
+- `applications`: taskId, applicantId, Nachricht, Preis, Status
+- `chats`: Teilnehmer + Nachrichtenverlauf
+
+Bitte erzeuge für mich ein startfähiges Projekt mit:
+- React (Create React App oder Next.js)
+- Firebase (Auth, Firestore, Storage, ggf. Realtime DB)
+- Tailwind CSS oder vergleichbares Framework
+- Mobile-only UI
+- Dummy-Komponenten für Start (Profil, Explore, Task erstellen, Bewerben, Chat)
+
+Ich möchte es später selbst weiterentwickeln, also bitte sauberen, gut kommentierten Code erzeugen.

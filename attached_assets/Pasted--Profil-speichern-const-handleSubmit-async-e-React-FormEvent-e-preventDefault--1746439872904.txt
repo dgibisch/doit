@@ -1,0 +1,122 @@
+// Profil speichern
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  console.log("🔍 FORM SUBMISSION - Formular wird abgeschickt");
+  
+  // Validierung
+  if (!username || username.length < 3) {
+    toast({
+      title: 'Ungültiger Nutzername',
+      description: 'Bitte wähle einen Nutzernamen mit mindestens 3 Zeichen',
+      variant: 'destructive',
+    });
+    return;
+  }
+
+  if (!location) {
+    toast({
+      title: 'Standort fehlt',
+      description: 'Bitte gib deinen Standort an',
+      variant: 'destructive',
+    });
+    return;
+  }
+
+  if (!usernameAvailable) {
+    toast({
+      title: 'Nutzername nicht verfügbar',
+      description: 'Bitte wähle einen anderen Nutzernamen',
+      variant: 'destructive',
+    });
+    return;
+  }
+
+  setSubmitting(true);
+
+  try {
+    let finalAvatarUrl = null;
+
+    // Bild hochladen, falls vorhanden
+    if (image) {
+      setUploadingImage(true);
+      try {
+        console.log("🖼️ Starte Profilbild-Upload");
+        
+        if (!user?.uid) {
+          throw new Error("Benutzer-ID nicht verfügbar");
+        }
+        
+        // Upload mit der verbesserten Funktion
+        finalAvatarUrl = await uploadUserAvatar(image, user.uid);
+        
+        console.log("✅ Profilbild erfolgreich hochgeladen:", 
+                    finalAvatarUrl ? finalAvatarUrl.substring(0, 50) + "..." : "keine URL");
+        
+        // Ressourcen freigeben
+        if (imageUrl && imageUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(imageUrl);
+        }
+        setImage(null);
+        setImageUrl(null);
+      } catch (uploadError) {
+        console.error('❌ Fehler beim Hochladen des Avatars:', uploadError);
+        toast({
+          title: 'Upload fehlgeschlagen',
+          description: uploadError instanceof Error ? uploadError.message : 'Das Profilbild konnte nicht hochgeladen werden',
+          variant: 'destructive',
+        });
+        setUploadingImage(false);
+        setSubmitting(false);
+        return;
+      } finally {
+        setUploadingImage(false);
+      }
+    }
+
+    // Profil aktualisieren
+    if (!user?.uid) {
+      throw new Error("Benutzer-ID nicht verfügbar");
+    }
+    
+    // Profilaktualisierungsdaten vorbereiten
+    const profileData: Record<string, any> = {
+      displayName: username,
+      location: location.address,
+      locationCoordinates: {
+        lat: location.lat,
+        lng: location.lng
+      },
+      locationSource: 'manual',
+    };
+    
+    // Füge die Bild-URL nur hinzu, wenn ein neues Bild hochgeladen wurde
+    if (finalAvatarUrl) {
+      profileData.photoURL = finalAvatarUrl;
+      profileData.avatarUrl = finalAvatarUrl;
+    }
+    
+    console.log("👤 Aktualisiere Benutzerprofil:", user.uid);
+    await updateUserProfile(user.uid, profileData);
+
+    // Nutzerprofil aktualisieren
+    await refreshUserProfile();
+
+    toast({
+      title: 'Profil gespeichert',
+      description: 'Dein Profil wurde erfolgreich eingerichtet!',
+    });
+
+    // Modal schließen
+    setOpen(false);
+  } catch (error) {
+    console.error('❌ Fehler beim Speichern des Profils:', error);
+    toast({
+      title: 'Fehler',
+      description: 'Beim Speichern ist ein Fehler aufgetreten. Bitte versuche es erneut.',
+      variant: 'destructive',
+    });
+  } finally {
+    setSubmitting(false);
+  }
+};

@@ -1,0 +1,86 @@
+✅ Checkliste für Replit: Bild-Upload hängt beim Speichern
+🧪 1. Bild wird lokal angezeigt, aber „Speichern“ hängt → heißt:
+Das Bild ist nur lokal in der Vorschau
+
+Die Upload-Funktion (uploadUserAvatar) wird zwar aufgerufen, aber:
+
+hängt ewig beim uploadBytes(...)
+
+oder kommt nicht bis getDownloadURL(...)
+
+oder blockiert durch ungültige Datei, Größe oder Rechte
+
+🛠 Replit Copy-Paste Debug-Check:
+Bitte überprüfe diesen Code in der Profil-Speichern-Funktion – genau so strukturieren:
+
+ts
+Kopieren
+Bearbeiten
+const handleSave = async () => {
+  setSaving(true);
+  try {
+    let finalUrl = currentUser.avatarUrl;
+
+    if (selectedFile) {
+      if (selectedFile.size > 3 * 1024 * 1024) {
+        toast({ title: "Bild ist zu groß. Max 3MB." });
+        setSaving(false);
+        return;
+      }
+
+      console.log("Uploading file...");
+      finalUrl = await uploadUserAvatar(selectedFile, currentUser.uid);
+      console.log("Upload finished, URL:", finalUrl);
+    }
+
+    await updateUserProfile(currentUser.uid, {
+      username,
+      location,
+      avatarUrl: finalUrl,
+    });
+
+    toast({ title: "Gespeichert" });
+  } catch (err) {
+    console.error("Fehler beim Speichern:", err);
+    toast({ title: "Fehler beim Speichern", description: err.message });
+  } finally {
+    setSaving(false);
+  }
+};
+🔎 2. Prüfen: Wird uploadUserAvatar() korrekt aufgerufen?
+Sag Replit:
+
+Füge console.log()-Ausgaben vor und nach dem Upload ein, um zu sehen, wo es hängt:
+
+Vor dem Upload
+
+Nach uploadBytes(...)
+
+Nach getDownloadURL(...)
+
+🔐 3. Firebase Storage Regeln prüfen
+In Firebase Console > Storage > Regeln:
+
+js
+Kopieren
+Bearbeiten
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read;
+      allow write: if request.auth != null;
+    }
+  }
+}
+Falls das nicht gesetzt ist → Upload wird blockiert, ohne saubere Fehlermeldung.
+
+✅ Fazit für Replit:
+Der Upload-Vorgang im Profil scheint bei uploadUserAvatar() hängen zu bleiben.
+Bitte prüfe:
+
+ob uploadBytes(...) + getDownloadURL(...) wirklich korrekt abgeschlossen werden,
+
+ob Firebase Storage Regeln das zulassen,
+
+und ob beim Klick auf „Speichern“ überhaupt ins .catch()-Block gesprungen wird.

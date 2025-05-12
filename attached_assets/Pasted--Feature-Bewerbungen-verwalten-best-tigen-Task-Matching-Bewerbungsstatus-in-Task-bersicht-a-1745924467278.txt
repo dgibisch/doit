@@ -1,0 +1,47 @@
+🛠 Feature: Bewerbungen verwalten & bestätigen (Task Matching)
+
+Bewerbungsstatus in Task-Übersicht anzeigen:
+Wenn sich der aktuell eingeloggte User auf einen Task beworben hat (Prüfung via task.applicants), soll statt „Bewerben“ der Button „Beworben“ erscheinen.
+Dieser Button kann entweder deaktiviert sein oder optional direkt zum Chat führen.
+
+Datenstruktur im Task-Dokument erweitern:
+Jeder Task speichert folgende Felder:
+
+applicants: Array aller Bewerber, jeweils mit userId, timestamp und Nachricht
+
+selectedApplicant: User-ID des ausgewählten Bewerbers (anfangs null)
+
+confirmedBy: Array der User-IDs, die bereits bestätigt haben
+
+Beispiel Task-Datenstruktur: { "id": "task_123", "title": "Landschaftsgärtner", "status": "offen", "creatorId": "user_abc", "applicants": [ { "userId": "user_xyz", "timestamp": "2025-04-30T10:00:00Z", "message": "Ich helfe dir gerne!" } ], "selectedApplicant": null, "confirmedBy": [] }
+
+Chat: Auswahl und Bestätigung:
+Im Chatfenster des Tasks soll der Task-Ersteller folgende Möglichkeit haben:
+
+Button „Diesen Nutzer auswählen“ sichtbar, wenn er noch keinen Bewerber gewählt hat.
+
+Klick auf den Button setzt task.selectedApplicant = Bewerber-User-ID.
+
+Danach Systemnachricht im Chat: „Du hast [Name] ausgewählt.“
+
+Beim Bewerber erscheint im Chat:
+
+Hinweis: "Du wurdest für diesen Task ausgewählt!"
+
+Button "Aufgabe bestätigen" erscheint.
+
+Beide Seiten (Ersteller und Bewerber) müssen danach bestätigen:
+
+Wenn beide in task.confirmedBy gespeichert sind (Ersteller und Bewerber), wird der task.status auf „in_bearbeitung“ gesetzt.
+
+Eine weitere Systemnachricht wird automatisch versendet: „Die Aufgabe wurde offiziell gestartet!“
+
+Darstellung nach Bestätigung:
+
+In der Task-Übersicht oder im Detailbereich soll sichtbar sein: „Wird ausgeführt von [Name]“.
+
+Bewerbungen anderer Nutzer werden automatisch deaktiviert oder die Task ist für neue Bewerbungen gesperrt.
+
+Wichtig:
+Alle Aktionen sollen sauber im Firestore/Backend synchronisiert werden.
+Es darf keine doppelten Bewerbungen oder Auswahl-Konflikte geben.

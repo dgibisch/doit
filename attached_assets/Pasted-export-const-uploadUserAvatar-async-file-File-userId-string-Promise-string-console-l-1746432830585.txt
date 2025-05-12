@@ -1,0 +1,83 @@
+export const uploadUserAvatar = async (file: File, userId: string): Promise<string> => {
+  console.log("Starte Upload von Profilbild:", file.name);
+  
+  try {
+    // Grundlegende Validierung
+    if (!file) throw new Error("Keine Datei zum Hochladen angegeben");
+    if (!userId) throw new Error("Keine Benutzer-ID angegeben");
+    if (!(file instanceof File)) {
+      throw new Error("Ungültiges Dateiobjekt, bitte wählen Sie erneut eine Datei aus");
+    }
+    
+    // Prüfen, ob Firebase Storage korrekt initialisiert ist
+    if (!storage) {
+      console.error("Firebase Storage nicht initialisiert");
+      throw new Error("Uploadfehler: Speicherdienst nicht verfügbar");
+    }
+    
+    // Eindeutiger Dateiname mit Benutzer-ID und Timestamp
+    const timestamp = Date.now();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+    const fileName = `avatar_${userId}_${timestamp}_${safeFileName}`;
+    const storageRef = ref(storage, `avatars/${fileName}`);
+    
+    console.log("Lade Datei hoch zu:", `avatars/${fileName}`);
+    
+    // WICHTIGE ÄNDERUNG: Direkter Upload ohne vorherige Komprimierung im ersten Versuch
+    try {
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(snapshot.ref);
+      console.log("Profilbild erfolgreich hochgeladen:", downloadUrl.substring(0, 50) + "...");
+      
+      // Aktualisieren des Benutzerprofils mit der neuen Bild-URL
+      await updateUserProfile(userId, {
+        photoURL: downloadUrl,
+        avatarUrl: downloadUrl, // Für Abwärtskompatibilität
+        photoUpdatedAt: new Date().toISOString()
+      });
+      
+      return downloadUrl;
+    } catch (initialUploadError) {
+      // Wenn direkter Upload fehlschlägt, versuchen wir es mit Komprimierung
+      console.warn("Direkter Upload fehlgeschlagen, versuche mit Komprimierung:", initialUploadError);
+      
+      // Komprimierung nur als Fallback
+      const { compressImage } = await import('@/utils/imageUtils');
+      const compressedFile = await compressImage(file, {
+        maxSizeMB: 0.5,
+        maxWidthOrHeight: 600,
+        useWebWorker: true
+      });
+      
+      // Direkter Upload des komprimierten Files ohne Blob-Konvertierung
+      const compressedSnapshot = await uploadBytes(storageRef, compressedFile);
+      const downloadUrl = await getDownloadURL(compressedSnapshot.ref);
+      
+      console.log("Komprimierter Upload erfolgreich:", downloadUrl.substring(0, 50) + "...");
+      
+      // Aktualisieren des Benutzerprofils
+      await updateUserProfile(userId, {
+        photoURL: downloadUrl,
+        avatarUrl: downloadUrl,
+        photoUpdatedAt: new Date().toISOString()
+      });
+      
+      return downloadUrl;
+    }
+  } catch (error) {
+    console.error("Fehler beim Hochladen des Profilbilds:", error);
+    
+    // Benutzerfreundliche Fehlermeldung
+    if (error instanceof Error) {
+      console.error("Fehlerdetails:", error.message);
+      
+      if (error.message.includes("storage/unauthorized")) {
+        throw new Error("Zugriff verweigert. Bitte melde dich erneut an.");
+      } else if (error.message.includes("storage/retry-limit-exceeded")) {
+        throw new Error("Netzwerkfehler. Bitte überprüfe deine Internetverbindung.");
+      }
+    }
+    
+    throw new Error("Fehler beim Hochladen des Bildes. Bitte versuche es später erneut.");
+  }
+};

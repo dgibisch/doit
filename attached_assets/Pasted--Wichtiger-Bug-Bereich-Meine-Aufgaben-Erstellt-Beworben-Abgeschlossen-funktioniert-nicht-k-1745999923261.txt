@@ -1,0 +1,43 @@
+❗️Wichtiger Bug: Bereich "Meine Aufgaben" (Erstellt / Beworben / Abgeschlossen) funktioniert nicht korrekt
+
+Obwohl Tasks erstellt, Bewerbungen abgeschickt und Aufgaben abgeschlossen wurden, bleibt alles leer. Bitte überarbeite die komplette Logik dahinter. Aktuell ist das Verhalten technisch falsch.
+
+🔍 Aufgaben:
+1. Die drei Tabs müssen korrekt dynamisch aus der Datenbank befüllt werden – basierend auf dem aktuellen eingeloggten User.
+
+2. Verwende folgende Abfragen:
+
+🟦 Tab: "Erstellt"
+- Zeige alle Tasks an, bei denen `task.creatorId === currentUserId`
+- Nutze hier `task.status === 'open' || task.status === 'assigned'`
+- Zeige auch den Bewerbungsstatus, z. B. `0 Bewerbungen`, `1 Bewerbung`, `assigned`, usw.
+- Stelle Button bereit: „Zum Chat“, wenn bereits Bewerber vorhanden sind
+
+🟨 Tab: "Beworben"
+- Zeige Tasks, bei denen `currentUserId` sich beworben hat (`task.applications[]` enthält ihn)
+- Zeige Status:
+    - offen → "Bewerbung läuft"
+    - abgelehnt → "Abgelehnt" (z. B. grauer Status-Badge)
+    - angenommen → "Zugewiesen"
+- Button „Zum Chat“ oder „Details anzeigen“
+
+🟩 Tab: "Abgeschlossen"
+- Zeige alle Tasks, bei denen
+    - `task.status === 'done'`
+    - UND `task.creatorId === currentUserId` ODER `task.assignedUserId === currentUserId`
+- Zeige Button: „Chat öffnen“ oder ggf. „Aufgabe bewerten“ (für später)
+
+3. UX:
+- Die Komponenten sollen visuell identisch mit den Standard-Taskkarten in der Entdecken-Ansicht sein
+- Diese Karten sollen aber erweitert werden durch relevante Info wie Status-Badges (z. B. „Abgeschlossen“, „Abgelehnt“, „Zugewiesen“)
+- Daten müssen aus der echten DB geladen werden – keine Dummy-Einträge mehr!
+
+📌 Wichtig:
+- Vermeide hartcodierte Listen oder fehlerhafte Filter
+- Nutze zentral dieselbe Kartenkomponente überall (statt alles dreifach zu bauen)
+
+🧪 Bitte nach Umsetzung:
+- Testen mit mehreren Usern (du kannst für Tests 2 Accounts anlegen)
+- Mindestens 1 Task selbst erstellen, sich mit dem zweiten bewerben, den Task abschließen und alles kontrollieren
+
+Danke!

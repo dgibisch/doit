@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { reviewService } from "@/lib/review-service";
 import { auth } from "@/lib/firebase";
 import { useReview } from "@/context/ReviewContext";
+import { useTranslation } from "react-i18next";
 
 interface ReviewModalProps {
   isOpen: boolean;
@@ -31,12 +32,13 @@ export default function ReviewModal({ isOpen, onClose, taskId, userId, userName,
   const { toast } = useToast();
   const currentUser = auth.currentUser;
   const { notifyReviewSubmitted } = useReview();
+  const { t } = useTranslation();
   
   const handleSubmit = async () => {
     if (!rating) {
       toast({
-        title: "Bewertung erforderlich",
-        description: "Bitte gib eine Sternebewertung ab",
+        title: t('review.ratingRequired'),
+        description: t('review.pleaseRateWithStars'),
         variant: "destructive"
       });
       return;
@@ -46,8 +48,8 @@ export default function ReviewModal({ isOpen, onClose, taskId, userId, userName,
     
     if (!currentUser) {
       toast({
-        title: "Fehler",
-        description: "Du musst angemeldet sein, um eine Bewertung abzugeben",
+        title: t('common.error'),
+        description: t('review.loginRequired'),
         variant: "destructive"
       });
       return;
@@ -65,8 +67,8 @@ export default function ReviewModal({ isOpen, onClose, taskId, userId, userName,
       );
       
       toast({
-        title: "Bewertung abgegeben",
-        description: `Vielen Dank für deine Bewertung von ${userName}!`,
+        title: t('review.success'),
+        description: t('review.successDescription'),
       });
       
       // Event auslösen, dass eine Bewertung abgegeben wurde
@@ -79,8 +81,8 @@ export default function ReviewModal({ isOpen, onClose, taskId, userId, userName,
     } catch (error: any) {
       console.error("Fehler beim Abgeben der Bewertung:", error);
       toast({
-        title: "Fehler beim Abgeben der Bewertung",
-        description: error.message || "Bitte versuche es später erneut",
+        title: t('review.error'),
+        description: error.message || t('review.errorDescription'),
         variant: "destructive"
       });
     } finally {
@@ -92,11 +94,11 @@ export default function ReviewModal({ isOpen, onClose, taskId, userId, userName,
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Bewerte {userName}</DialogTitle>
+          <DialogTitle>{t('review.rate')} {userName}</DialogTitle>
           <DialogDescription>
             {userRole === 'creator' 
-              ? "Wie zufrieden warst du mit dem Auftraggeber dieser Aufgabe?" 
-              : "Wie zufrieden warst du mit der Durchführung dieser Aufgabe?"}
+              ? t('review.satisfactionWithTaskCreator')
+              : t('review.satisfactionWithTaskExecution')}
           </DialogDescription>
         </DialogHeader>
         
@@ -123,11 +125,11 @@ export default function ReviewModal({ isOpen, onClose, taskId, userId, userName,
           {/* Bewertungstext (optional) */}
           <div className="space-y-2">
             <label htmlFor="comment" className="text-sm font-medium">
-              Dein Feedback (optional)
+              {t('review.yourFeedback')}
             </label>
             <Textarea
               id="comment"
-              placeholder="Schreibe einen Kommentar zu deiner Erfahrung (optional)..."
+              placeholder={t('review.writeComment')}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               rows={4}
@@ -137,16 +139,16 @@ export default function ReviewModal({ isOpen, onClose, taskId, userId, userName,
         
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
-            Abbrechen
+            {t('common.cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={isSubmitting}>
             {isSubmitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Wird gesendet...
+                {t('common.sending')}
               </>
             ) : (
-              "Bewertung abschicken"
+              t('review.submitReview')
             )}
           </Button>
         </DialogFooter>

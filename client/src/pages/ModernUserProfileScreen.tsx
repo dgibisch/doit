@@ -19,6 +19,7 @@ import { useNavigation } from '@/hooks/use-navigation';
 import { formatCurrency } from '@/lib/utils';
 import { getCategoryColor } from '@/lib/categories';
 import TaskImage from '@/components/TaskImage';
+import ReviewsList from '@/components/reviews/ReviewsList';
 
 // Rating stars component
 const RatingStars = ({ rating }: { rating: number }) => {
@@ -507,24 +508,7 @@ const ModernUserProfileScreen = () => {
           </TabsList>
           
           <TabsContent value="reviews">
-            {reviews.length > 0 ? (
-              <div>
-                {reviews.map((review: any) => (
-                  <ReviewItem 
-                    key={review.id} 
-                    review={review} 
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <MessageSquare className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                <h3 className="text-lg font-medium text-gray-600 mb-2">Keine Bewertungen</h3>
-                <p className="text-gray-500 text-sm">
-                  Dieser Benutzer hat noch keine Bewertungen erhalten.
-                </p>
-              </div>
-            )}
+            {id && <ReviewsList userId={id} />}
           </TabsContent>
           
           <TabsContent value="tasks">

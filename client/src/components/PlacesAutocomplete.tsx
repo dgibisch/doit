@@ -70,7 +70,6 @@ export default function PlacesAutocomplete({
         
         // Erstelle globale Callback-Funktion
         window.initGoogleMapsCallback = () => {
-          console.log('Google Maps API loaded');
           setIsLoading(false);
           initializeAutocomplete();
         };
@@ -83,7 +82,6 @@ export default function PlacesAutocomplete({
           script.async = true;
           script.defer = true;
           document.body.appendChild(script);
-          console.log('Google Maps Script eingefügt:', script.src);
         }
       } catch (error) {
         console.error('Error loading Google Maps API:', error);
@@ -144,7 +142,6 @@ export default function PlacesAutocomplete({
         setTimeout(() => {
           const pacContainers = document.querySelectorAll('.pac-container');
           pacContainers.forEach(el => el.remove());
-          console.log(`${pacContainers.length} Google Places Dropdown-Elemente entfernt`);
         }, 200);
         
         // Callback aufrufen

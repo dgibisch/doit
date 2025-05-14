@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { format } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { useChat } from '@/hooks/use-chat';
-import { uploadChatImage } from '@/lib/firebase';
+import { uploadChatImage, requestLocationSharing, respondToLocationRequest, isLocationSharedInChat } from '@/lib/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { useReview } from '@/context/ReviewContext';
 import { type ChatMessage, type Chat } from '@/lib/chat-service';
@@ -12,11 +12,9 @@ import { useLocation } from 'wouter';
 import { routes } from '@/routes';
 import { useNavigation } from '@/hooks/use-navigation';
 import { useTranslation } from 'react-i18next';
-import { 
-  respondToLocationRequest,
-  isLocationSharedInChat,
-  getSharedTaskLocation
-} from '@/lib/location-sharing';
+import LocationSharingButton from '@/components/chat/LocationSharingButton';
+import LocationDisplay from '@/components/chat/LocationDisplay';
+import { sendLocationMessage } from '@/lib/location-helper';
 import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -466,7 +464,7 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
   const { t } = useTranslation();
   const { user, userProfile } = useAuth();
   const [, navigate] = useLocation();
-  const { navigateToProfile } = useNavigation();
+  const { navigateToUserProfile } = useNavigation();
   const { 
     chat, 
     messages, 
@@ -510,22 +508,36 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
   
   // Check if location has already been shared
   useEffect(() => {
+    let isMounted = true;
+    
     const checkLocationSharedStatus = async () => {
       if (!chatId) return;
       
       try {
         setCheckingLocationStatus(true);
         const shared = await isLocationSharedInChat(chatId);
-        setIsLocationShared(shared);
+        if (isMounted) {
+          setIsLocationShared(shared);
+        }
       } catch (error) {
         console.error("Error checking location sharing status:", error);
       } finally {
-        setCheckingLocationStatus(false);
+        if (isMounted) {
+          setCheckingLocationStatus(false);
+        }
       }
     };
     
-    checkLocationSharedStatus();
-  }, [chatId]);
+    // Nur beim ersten Rendern oder wenn sich chatId ändert ausführen
+    if (!isLocationShared) {
+      checkLocationSharedStatus();
+    }
+    
+    // Cleanup function
+    return () => {
+      isMounted = false;
+    };
+  }, [chatId, isLocationShared]);
   
   // Check if the current user has already submitted a review
   useEffect(() => {
@@ -550,8 +562,6 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
           if (!triggerElement.parentNode) {
             document.body.appendChild(triggerElement);
           }
-          
-          console.log('Review trigger element created for chat:', chatId);
         }
       } catch (error) {
         console.error("Error checking review status:", error);
@@ -681,14 +691,13 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
   };
   
   // Request or directly share location (for task owner)
-  const handleRequestLocation = async () => {
+  const handleRequestLocation = useCallback(async () => {
     if (!user?.id || !chatId || !chat?.taskId) return;
     
     try {
       setRequestingLocation(true);
       
-      // Use the new simple helper function
-      const { sendLocationMessage } = await import('@/lib/location-helper');
+      // Use imported sendLocationMessage function
       const success = await sendLocationMessage(chatId, user.id, chat.taskId);
       
       if (success) {
@@ -711,10 +720,10 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
     } finally {
       setRequestingLocation(false);
     }
-  };
+  }, [chatId, user?.id, chat?.taskId, toast, t]);
   
   // Respond to location request
-  const handleLocationResponse = async (approved: boolean) => {
+  const handleLocationResponse = useCallback(async (approved: boolean) => {
     if (!user?.id || !chatId || !chat?.taskId) return;
     
     try {
@@ -745,7 +754,7 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
     } finally {
       setRespondingToLocation(false);
     }
-  };
+  }, [chatId, user?.id, chat?.taskId, toast, t]);
   
   // Send message
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -865,7 +874,7 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
               className="mr-3 h-8 w-8 cursor-pointer hover:opacity-80 transition-opacity"
               onClick={(e) => {
                 e.stopPropagation();
-                if (otherParticipantId) navigateToProfile(otherParticipantId);
+                if (otherParticipantId) navigateToUserProfile(otherParticipantId);
               }}
               title={t('profile.showProfileOf', {name: chat?.participantNames?.[otherParticipantId] || t('common.user')})}
             >
@@ -892,7 +901,7 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
                 className="text-sm font-medium cursor-pointer hover:text-indigo-600 hover:underline transition-colors flex items-center"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (otherParticipantId) navigateToProfile(otherParticipantId);
+                  if (otherParticipantId) navigateToUserProfile(otherParticipantId);
                 }}
                 title={t('profile.viewProfile')}
               >
@@ -1065,7 +1074,7 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
                 currentUserProfile={userProfile}
                 onProfileClick={(userId, event) => {
                   event.stopPropagation();
-                  if (userId) navigateToProfile(userId);
+                  if (userId) navigateToUserProfile(userId);
                 }}
                 onLocationResponse={handleLocationResponse}
               />
@@ -1074,6 +1083,15 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
         )}
         {/* Unsichtbares Element für automatisches Scrollen */}
         <div ref={messagesEndRef} className="h-3" />
+        
+        {/* Standortanzeige, wenn der Standort freigegeben wurde */}
+        {isLocationShared && chat?.taskId && (
+          <LocationDisplay 
+            chatId={chatId}
+            taskId={chat.taskId}
+            isShared={isLocationShared}
+          />
+        )}
       </div>
       
       {/* Eingabebereich - fixiert am unteren Bildschirmrand */}
@@ -1126,6 +1144,14 @@ const ModernChatView: React.FC<ModernChatViewProps> = ({ chatId, onBack }) => {
               />
               
               <div className="absolute right-2 flex items-center space-x-1">
+                {/* Location-Sharing-Button (Nur für Aufgabenchats anzeigen) */}
+                {isApplicationChat && chat?.taskId && (
+                  <LocationSharingButton 
+                    chatId={chatId} 
+                    locationShared={isLocationShared}
+                  />
+                )}
+                
                 {/* Bild-Upload-Button */}
                 <button
                   type="button"

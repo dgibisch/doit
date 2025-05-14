@@ -5,7 +5,7 @@ import {
   signOut as firebaseSignOut,
   type User as FirebaseUser
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db, createUserProfile, getUserProfile } from '@/lib/firebase';
 
 /**
@@ -39,10 +39,10 @@ const mapFirebaseUser = (firebaseUser: FirebaseUser): User => {
   return {
     uid: firebaseUser.uid,
     id: firebaseUser.uid, // Backward compatibility
-    displayName: firebaseUser.displayName,
-    name: firebaseUser.displayName, // Backward compatibility
-    email: firebaseUser.email,
-    photoURL: firebaseUser.photoURL,
+    displayName: firebaseUser.displayName || '',
+    name: firebaseUser.displayName || '', // Backward compatibility
+    email: firebaseUser.email || '',
+    photoURL: firebaseUser.photoURL || undefined,
     avatarUrl: undefined // Wird später aus dem Benutzerprofil ergänzt
   };
 };
@@ -51,6 +51,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Listen für Änderungen an den Benutzerbenachrichtigungen
+  useEffect(() => {
+    if (user?.uid) {
+      // Echtzeit-Listener für das Benutzerprofil, um die unreadNotifications zu aktualisieren
+      const userDocRef = doc(db, 'users', user.uid);
+      const unsubscribe = onSnapshot(userDocRef, (docSnapshot) => {
+        if (docSnapshot.exists()) {
+          const userData = docSnapshot.data();
+          if (userData && profile) {
+            // Aktualisiere das Profil, wenn sich unreadNotifications ändert
+            setProfile((prev) => {
+              if (prev && userData.unreadNotifications !== prev.unreadNotifications) {
+                console.log('Ungelesene Benachrichtigungen aktualisiert:', userData.unreadNotifications);
+                return { ...prev, unreadNotifications: userData.unreadNotifications };
+              }
+              return prev;
+            });
+          }
+        }
+      });
+      
+      return () => unsubscribe();
+    }
+  }, [user?.uid, profile]);
 
   // Listen for Firebase auth state changes
   useEffect(() => {

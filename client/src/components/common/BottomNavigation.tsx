@@ -1,11 +1,12 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import { 
   PlusCircle,
   User,
   Search,
   MessageSquare,
-  ListChecks
+  ListChecks,
+  Bell
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/context/AuthContext';
@@ -58,9 +59,19 @@ const BottomNavigation: React.FC<BottomNavigationProps> = ({
   showNotifications = true
 }) => {
   const [location] = useLocation();
-  const { profile, user } = useAuth();
+  const { userProfile, user } = useAuth();
   const { isVisible } = useBottomNavContext();
   const { t } = useTranslation();
+  
+  // Debug-Log für Benachrichtigungen
+  useEffect(() => {
+    if (userProfile) {
+      console.log('BottomNavigation - UserProfile:', {
+        unreadNotifications: userProfile.unreadNotifications,
+        uid: userProfile.uid
+      });
+    }
+  }, [userProfile?.unreadNotifications]);
   
   // Navigationshöhe für Position und Abstand
   const NAV_HEIGHT = 65; // in Pixeln, inklusive Padding
@@ -143,27 +154,37 @@ const BottomNavigation: React.FC<BottomNavigationProps> = ({
       {/* Create Button (mittig) */}
       {showCreateButton && <CreateButton />}
       
-      {/* Nachrichten */}
+      {/* Nachrichten / Chat */}
       <Link href={getHref(routes.messages)}>
         <div className={`flex flex-col items-center cursor-pointer ${isPathInSection(location, 'messages') ? 'text-primary' : 'text-gray-500'}`}>
+          <MessageSquare className="h-6 w-6" />
+          <span className="text-xs mt-1">{t('common.messages')}</span>
+        </div>
+      </Link>
+      
+      {/* Benachrichtigungen */}
+      <Link href={getHref(routes.notifications)}>
+        <div className={`flex flex-col items-center cursor-pointer ${isPathInSection(location, 'notifications') ? 'text-primary' : 'text-gray-500'}`}>
           <div className="relative">
-            <MessageSquare className="h-6 w-6" />
-            {showNotifications && (
-              <div className="absolute -top-1 -right-1 bg-red-500 w-2 h-2 rounded-full"></div>
+            <Bell className="h-6 w-6" />
+            {showNotifications && userProfile && userProfile.unreadNotifications && userProfile.unreadNotifications > 0 && (
+              <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                {userProfile.unreadNotifications > 9 ? '9+' : userProfile.unreadNotifications}
+              </div>
             )}
           </div>
-          <span className="text-xs mt-1">{t('common.messages')}</span>
+          <span className="text-xs mt-1">{t('notifications.title')}</span>
         </div>
       </Link>
       
       {/* Profil */}
       <Link href={user ? routes.profile : routes.login}>
         <div className={`flex flex-col items-center cursor-pointer ${isPathInSection(location, 'profile') ? 'text-primary' : 'text-gray-500'}`}>
-          {user && profile?.photoURL ? (
+          {user && userProfile?.photoURL ? (
             <Avatar className="h-6 w-6">
-              <AvatarImage src={profile.photoURL} alt={profile.displayName} />
+              <AvatarImage src={userProfile.photoURL} alt={userProfile.displayName} />
               <AvatarFallback className="text-xs bg-gray-200">
-                {profile.displayName?.charAt(0) || 'U'}
+                {userProfile.displayName?.charAt(0) || 'U'}
               </AvatarFallback>
             </Avatar>
           ) : (

@@ -17,7 +17,7 @@ interface LocationShareButtonProps {
   taskId: string;
   location?: { lat: number; lng: number; };
   address?: string;
-  isLocationShared?: boolean;
+  isLocationShared: boolean;
   isCreator?: boolean;
   onClick?: (location: { lat: number; lng: number; }, address: string) => void;
 }

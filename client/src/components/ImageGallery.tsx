@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { getCategoryImage } from '@/lib/categoryImages';
 import ImageModal from './ImageModal';
 import { Button } from '@/components/ui/button';
+import LazyImage from '@/components/ui/LazyImage';
 
 interface ImageGalleryProps {
   images: string[];
@@ -145,7 +146,7 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({
                   key={index}
                   className="relative flex-[0_0_100%] flex items-center justify-center h-full"
                 >
-                  <img
+                  <LazyImage
                     src={image}
                     alt={`Task image ${index + 1}`}
                     className="object-cover w-full h-full cursor-pointer"
@@ -156,7 +157,7 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({
             ) : (
               // Fallback auf Kategorie-Bild
               <div className="relative flex-[0_0_100%] h-full">
-                <img
+                <LazyImage
                   src={fallbackImage}
                   alt={`${category} category`}
                   className="w-full h-full object-cover opacity-70"

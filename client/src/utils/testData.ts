@@ -338,8 +338,12 @@ export const createTestTasks = async (): Promise<{ success: boolean, message: st
         status: "open",
         createdAt: serverTimestamp(),
         location: {
-          lat: 52.520008 + (Math.random() * 0.1 - 0.05), // Berlin approx
-          lng: 13.404954 + (Math.random() * 0.1 - 0.05)
+          coordinates: {
+            lat: 52.520008 + (Math.random() * 0.1 - 0.05), // Berlin approx
+            lng: 13.404954 + (Math.random() * 0.1 - 0.05)
+          },
+          address: 'Berlin, Deutschland',
+          city: 'Berlin'
         }
       });
       

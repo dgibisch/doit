@@ -32,7 +32,7 @@ export const routes = {
 /**
  * Typen für die verschiedenen Bereiche der App
  */
-export type AppSection = 'discover' | 'myTasks' | 'messages' | 'profile' | 'create';
+export type AppSection = 'discover' | 'myTasks' | 'messages' | 'profile' | 'create' | 'notifications';
 
 /**
  * Prüft, ob ein bestimmter Pfad zu einem Abschnitt der App gehört
@@ -53,6 +53,8 @@ export function isPathInSection(path: string, section: AppSection): boolean {
       return path === routes.profile || path === routes.settings || path.startsWith('/user/');
     case 'create':
       return path === routes.createTask;
+    case 'notifications':
+      return path === routes.notifications;
     default:
       return false;
   }

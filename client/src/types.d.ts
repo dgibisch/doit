@@ -24,10 +24,10 @@ interface Window {
 declare interface User {
   uid: string;
   id?: string; // Kompatibilität für ältere Komponenten
-  email: string | null;
-  displayName: string | null;
+  email: string;
+  displayName: string;
   name?: string; // Kompatibilität für ältere Komponenten
-  photoURL: string | null;
+  photoURL: string | null | undefined;
   avatarUrl?: string; // Für Benutzerprofilbilder aus Firestore
   avatarBase64?: string; // Für Base64-kodierte Benutzerprofilbilder
 }
@@ -35,8 +35,8 @@ declare interface User {
 declare interface UserProfile {
   uid: string;
   displayName: string;
-  email: string | null;
-  photoURL: string | null;
+  email: string;
+  photoURL: string | null | undefined;
   avatarUrl?: string; // Für Benutzerprofilbilder aus Firestore
   avatarBase64?: string; // Für Base64-kodierte Benutzerprofilbilder
   completedTasks: number;
@@ -50,6 +50,7 @@ declare interface UserProfile {
   level?: string;
   bio?: string;
   bookmarkedTasks?: string[];
+  unreadNotifications?: number; // Anzahl der ungelesenen Benachrichtigungen
   createdAt?: any;
   updatedAt?: any;
 }
@@ -67,13 +68,20 @@ declare interface Task {
   category: string;
   price: number;
   status: string;
-  location?: string;
+  // Beide Varianten der Standortdaten unterstützen
+  location?: string | { 
+    coordinates: { lat: number; lng: number };
+    address?: string;
+    city?: string;
+  };
   locationCoordinates?: { lat: number; lng: number };
   creatorId: string;
   creatorName?: string;
   creatorPhotoURL?: string;
   creatorRating?: number;
   assignedUserId?: string;
+  taskerId?: string; // Kompatibilität: manche Teile nutzen taskerId statt assignedUserId
+  distance?: number; // Berechnete Entfernung zum Nutzer
   requirements?: string;
   images?: string[];
   imageUrls?: string[];
@@ -81,8 +89,23 @@ declare interface Task {
   createdAt: any; // Firebase Timestamp
   updatedAt?: any; // Firebase Timestamp
   applications?: TaskApplication[];
+  applicants?: TaskApplication[]; // Kompatibilität: manche Teile nutzen applicants statt applications
   timePreference?: string;
   timePreferenceDate?: any;
+  // Zusätzliche Felder für verschiedene Ansichten
+  timeInfo?: { 
+    isFlexible: boolean;
+    date?: Date | null;
+    formattedDate?: string | null;
+    timeOfDay?: string | null;
+    displayText: string;
+  } | string; // Formatierte Zeitinformation
+  address?: string; // Formatierte Adresse
+  area?: string; // Ortsteil/Stadtbezirk
+  isLocationShared?: boolean; // Ob der genaue Standort freigegeben wurde
+  selectedApplicant?: string; // ID des ausgewählten Bewerbers
+  // Zusätzliche Felder für UI-Komponenten
+  commentCount?: number; // Anzahl der Kommentare
 }
 
 declare interface UserTask extends Task {
@@ -152,6 +175,26 @@ declare interface Review {
   rating: number;
   text: string;
   createdAt: any;
+}
+
+declare interface AppNotification {
+  id: string;
+  userId: string;
+  type: string; // taskMatched, taskCompleted, reviewRequired, newMessage, etc.
+  title?: string;
+  message?: string;
+  read: boolean;
+  acted: boolean;
+  priority?: 'high' | 'normal';
+  data?: {
+    taskId?: string;
+    userId?: string;
+    chatId?: string;
+    reviewId?: string;
+    applicationId?: string;
+    [key: string]: any; // Erlaube andere dynamische Eigenschaften
+  };
+  createdAt: any; // Firebase Timestamp
 }
 
 /**

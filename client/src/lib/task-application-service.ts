@@ -10,7 +10,7 @@ import {
   getDocs,
   updateDoc
 } from 'firebase/firestore';
-import { db, auth } from './firebase';
+import { db, auth, createNotification, NotificationTypes } from './firebase';
 import { chatService } from './chat-service';
 
 export interface TaskApplication {
@@ -126,6 +126,17 @@ class TaskApplicationService {
           updatedAt: serverTimestamp()
         });
       }
+      
+      // Benachrichtigung an den Task-Ersteller senden
+      await createNotification(taskCreatorId, NotificationTypes.APPLICATION_RECEIVED, {
+        taskId,
+        taskTitle,
+        applicantId: currentUserId,
+        applicantName: currentUserName,
+        applicationId: applicationRef.id,
+        chatId: chatId,
+        requiresAction: true
+      });
 
       return {
         applicationId: applicationRef.id,

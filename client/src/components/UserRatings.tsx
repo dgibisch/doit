@@ -70,7 +70,17 @@ export default function UserRatings({ userId, compact = false }: UserRatingsProp
     );
   }
   
-  if (reviews.length === 0) {
+  // Kompakte Version bei keine Bewertungen
+  if (compact && reviews.length === 0) {
+    return (
+      <div className="flex items-center text-sm">
+        <span className="text-gray-500">Keine Bewertungen</span>
+      </div>
+    );
+  }
+  
+  // Vollständige Version bei keine Bewertungen
+  if (!compact && reviews.length === 0) {
     return (
       <div className="bg-gray-50 rounded-lg p-6 text-center">
         <h3 className="text-lg font-semibold mb-2">Keine Bewertungen</h3>

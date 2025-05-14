@@ -1,21 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense, lazy } from 'react';
 import { Route, Switch, Link, useLocation } from 'wouter';
-import AnalyticsDashboard from '@/pages/AnalyticsDashboard';
+import LoadingScreen from '@/components/ui/LoadingScreen';
+
+// Eager-loaded components
 import AuthScreen from '@/components/AuthScreen';
-import TasksScreen from '@/pages/TasksScreenWithFirebase';
-import CreateTaskScreen from '@/pages/CreateTaskScreen';
-import ProfileScreen from '@/pages/ProfileScreen';
-import UserProfileScreen from '@/pages/UserProfileScreen';
-import ModernUserProfileScreen from '@/pages/ModernUserProfileScreen';
-import ChatScreen from '@/pages/ChatScreen';
-import NewChatScreen from '@/pages/NewChatScreen';
-import TaskDetailScreen from '@/pages/TaskDetailScreen';
-import BookmarkedTasksScreen from '@/pages/BookmarkedTasksScreen';
-import StorageDebugScreen from '@/pages/StorageDebugScreen';
-import NotificationsScreen from '@/pages/NotificationsScreen';
-import SearchScreen from '@/pages/SearchScreen';
-import MyTasksScreen from '@/pages/MyTasksScreen';
-import SettingsScreen from '@/pages/SettingsScreen';
+
+// Lazy-loaded components
+const AnalyticsDashboard = lazy(() => import('@/pages/AnalyticsDashboard'));
+const TasksScreen = lazy(() => import('@/pages/TasksScreen'));
+const CreateTaskScreen = lazy(() => import('@/pages/CreateTaskScreen'));
+const ProfileScreen = lazy(() => import('@/pages/ProfileScreen'));
+const UserProfileScreen = lazy(() => import('@/pages/UserProfileScreen'));
+const ModernUserProfileScreen = lazy(() => import('@/pages/ModernUserProfileScreen'));
+const ChatScreen = lazy(() => import('@/pages/ChatScreen'));
+const NewChatScreen = lazy(() => import('@/pages/NewChatScreen'));
+const TaskDetailScreen = lazy(() => import('@/pages/TaskDetailScreen'));
+const BookmarkedTasksScreen = lazy(() => import('@/pages/BookmarkedTasksScreen'));
+const StorageDebugScreen = lazy(() => import('@/pages/StorageDebugScreen'));
+const NotificationsScreen = lazy(() => import('@/pages/NotificationsPage'));
+const SearchScreen = lazy(() => import('@/pages/SearchScreen'));
+const MyTasksScreen = lazy(() => import('@/pages/MyTasksScreen'));
+const SettingsScreen = lazy(() => import('@/pages/SettingsScreen'));
 import { Bookmark, Settings, MessageSquare, Bell, User } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { BottomNavProvider } from '@/context/BottomNavContext';
@@ -156,116 +161,127 @@ const LoginRedirect = ({ children }: { children: React.ReactNode }) => {
 function AppContent() {
   const { user } = useAuth();
   
+  // Loading fallback component used for all Suspense boundaries
+  const SuspenseFallback = () => <LoadingScreen label="Lade Seite..." />;
+  
   return (
     <div className="min-h-screen flex flex-col relative">
       <main className="flex-1 pb-20 md:pb-0">
-        <Switch>
-          <Route path={routes.login}>
-            <LoginRedirect>
-              <AuthScreen />
-            </LoginRedirect>
-          </Route>
-          
-          <Route path={routes.tasks}>
-            <PrivateRoute>
-              <TasksScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.createTask}>
-            <PrivateRoute>
-              <CreateTaskScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.profile}>
-            <PrivateRoute>
-              <ProfileScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path="/chat">
-            <PrivateRoute>
-              <NewChatScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path="/chat/:chatId">
-            <PrivateRoute>
-              <NewChatScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.messages}>
-            <PrivateRoute>
-              <NewChatScreen />
-            </PrivateRoute>
-          </Route>
+        <Suspense fallback={<SuspenseFallback />}>
+          <Switch>
+            <Route path={routes.login}>
+              <LoginRedirect>
+                <AuthScreen />
+              </LoginRedirect>
+            </Route>
+            
+            <Route path={routes.tasks}>
+              <PrivateRoute>
+                <TasksScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.createTask}>
+              <PrivateRoute>
+                <CreateTaskScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.profile}>
+              <PrivateRoute>
+                <ProfileScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path="/chat">
+              <PrivateRoute>
+                <NewChatScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path="/chat/:chatId">
+              <PrivateRoute>
+                <NewChatScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.messages}>
+              <PrivateRoute>
+                <NewChatScreen />
+              </PrivateRoute>
+            </Route>
 
-          <Route path={routes.analytics}>
-            <AnalyticsDashboard />
-          </Route>
-          
-          <Route path="/task/:id">
-            <PrivateRoute>
-              <TaskDetailScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path="/edit-task/:id">
-            <PrivateRoute>
-              <TaskDetailScreen editMode={true} />
-            </PrivateRoute>
-          </Route>
+            <Route path={routes.analytics}>
+              <AnalyticsDashboard />
+            </Route>
+            
+            <Route path={routes.notifications}>
+              <PrivateRoute>
+                <NotificationsScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path="/task/:id">
+              <PrivateRoute>
+                <TaskDetailScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path="/edit-task/:id">
+              <PrivateRoute>
+                <TaskDetailScreen editMode={true} />
+              </PrivateRoute>
+            </Route>
 
-          <Route path={routes.bookmarkedTasks}>
-            <PrivateRoute>
-              <BookmarkedTasksScreen />
-            </PrivateRoute>
-          </Route>
+            <Route path={routes.bookmarkedTasks}>
+              <PrivateRoute>
+                <BookmarkedTasksScreen />
+              </PrivateRoute>
+            </Route>
 
-          <Route path="/user/:id">
-            <PrivateRoute>
-              <ModernUserProfileScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.storageConfig}>
-            <PrivateRoute>
-              <StorageDebugScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.notifications}>
-            <PrivateRoute>
-              <NotificationsScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.taskSearch}>
-            <PrivateRoute>
-              <SearchScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.myTasks}>
-            <PrivateRoute>
-              <MyTasksScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path={routes.settings}>
-            <PrivateRoute>
-              <SettingsScreen />
-            </PrivateRoute>
-          </Route>
-          
-          <Route path="/">
-            <LoginRedirect>
-              <HomePage />
-            </LoginRedirect>
-          </Route>
-        </Switch>
+            <Route path="/user/:id">
+              <PrivateRoute>
+                <ModernUserProfileScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.storageConfig}>
+              <PrivateRoute>
+                <StorageDebugScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.notifications}>
+              <PrivateRoute>
+                <NotificationsScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.taskSearch}>
+              <PrivateRoute>
+                <SearchScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.myTasks}>
+              <PrivateRoute>
+                <MyTasksScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path={routes.settings}>
+              <PrivateRoute>
+                <SettingsScreen />
+              </PrivateRoute>
+            </Route>
+            
+            <Route path="/">
+              <LoginRedirect>
+                <HomePage />
+              </LoginRedirect>
+            </Route>
+          </Switch>
+        </Suspense>
       </main>
     </div>
   );

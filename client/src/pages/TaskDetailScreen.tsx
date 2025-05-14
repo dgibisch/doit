@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'wouter';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useParams, useLocation } from 'wouter';
 import { useNavigation } from '@/hooks/use-navigation';
-import { db, updateTask } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { db, updateTask, createReviewReminderNotification } from '@/lib/firebase';
+import { doc, getDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { useTranslation } from 'react-i18next';
 import { routes } from '@/routes';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,11 +21,13 @@ import ImageGallery from '@/components/ImageGallery';
 import BookmarkButton from '@/components/BookmarkButton';
 import TaskApplicationModal from '@/components/TaskApplicationModal';
 import TaskEditModal from '@/components/TaskEditModal';
+import ReviewDialog from '@/components/reviews/ReviewDialog';
 import { useAuth } from '@/context/AuthContext';
 import { useBottomNavContext } from '@/context/BottomNavContext';
 import { useUserLocation } from '@/context/LocationContext';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
+import LoadingScreen from '@/components/ui/LoadingScreen';
 import { uploadChatImage } from '@/lib/firebase';
 import LocationShareButton from '@/components/LocationShareButton';
 import UserLink from '@/components/UserLink';
@@ -33,6 +35,7 @@ import { commentService } from '@/lib/comment-service';
 import { useTaskComments } from '@/hooks/use-comments';
 import UserAvatar from '@/components/ui/user-avatar';
 import ZoomableImage from '@/components/ui/zoomable-image';
+import ZoomableLazyImage from '@/components/ui/ZoomableLazyImage';
 import { format } from 'date-fns';
 import { taskApplicationService } from '@/lib/task-application-service';
 import UserRatings from '@/components/UserRatings';
@@ -87,7 +90,8 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
   const { t } = useTranslation();
   const params = useParams<{ id: string }>();
   const taskId = params?.id;
-  const [task, setTask] = useState<any>(null);
+  const [location] = useLocation();
+  const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { goBack, navigateToUserProfile, navigate } = useNavigation();
@@ -95,6 +99,9 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
   const [isApplicationModalOpen, setIsApplicationModalOpen] = useState(false);
   const { user, userProfile } = useAuth();
   const { hideNav, showNav } = useBottomNavContext();
+  
+  // Tab-Steuerung für Bewerbungen
+  const [showApplicationsTab, setShowApplicationsTab] = useState(false);
   
   // Comment state
   const { comments, loading: commentsLoading, error: commentsError, addComment } = useTaskComments(taskId || null);
@@ -117,6 +124,9 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
     imageUrls: []
   });
   
+  // State für den Bewertungsdialog
+  const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
+  
   // State für das Edit-Modal
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   
@@ -136,8 +146,8 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
   const isTaskCreator = user && task && user.id === task.creatorId;
   
   // Berechne die Entfernung zum Task, wenn beide Standorte verfügbar sind
-  const distance = task?.location && userLocation 
-    ? calculateDistance(task.location)
+  const distance = task?.location && userLocation && typeof task.location === 'object'
+    ? calculateDistance(task.location.coordinates || task.location)
     : (task?.distance || 0);
   
   // Prüfen, ob der aktuell angemeldete Benutzer der ausgewählte Bewerber ist
@@ -155,6 +165,9 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
   };
   
   useEffect(() => {
+    // AbortController für Anfragen-Abbruch bei Komponente unmount
+    const abortController = new AbortController();
+    
     const fetchTask = async () => {
       if (!taskId) {
         setError(t('errors.taskNotFound'));
@@ -162,7 +175,14 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
         return;
       }
       
+      // Wenn die Komponente unmountet wurde, breche ab
+      if (abortController.signal.aborted) {
+        console.log("Abgebrochen: Die Komponente wurde unmounted");
+        return;
+      }
+      
       try {
+        // Lade die Aufgabe aus Firestore
         const taskDoc = await getDoc(doc(db, 'tasks', taskId));
         if (taskDoc.exists()) {
           const taskData = taskDoc.data();
@@ -173,9 +193,102 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
           // Debug Ausgabe für die gefundenen Bilder
           console.debug(`TaskDetail ${taskId}: ${imageUrls.length} Bilder aus Firestore`);
           
-          const loadedTask = {
+          // WICHTIG: Wir laden jetzt zusätzlich alle Bewerbungen für diese Aufgabe
+          // aus der applications-Sammlung in Firestore
+          console.log("Lade Bewerbungen für Aufgabe:", taskId);
+          
+          // Query für Bewerbungen zu dieser Aufgabe
+          const applicationsRef = collection(db, "applications");
+          const applicationsQuery = query(
+            applicationsRef, 
+            where("taskId", "==", taskId)
+          );
+          
+          // Ausführen der Query
+          const applicationsSnapshot = await getDocs(applicationsQuery);
+          
+          // Bewerbungen verarbeiten
+          const applications = applicationsSnapshot.docs.map((docSnapshot) => {
+            const data = docSnapshot.data();
+            return {
+              id: docSnapshot.id,
+              taskId: data.taskId,
+              applicantId: data.applicantId,
+              message: data.message,
+              price: data.price,
+              status: data.status,
+              createdAt: data.createdAt,
+              userId: data.applicantId, // Legacy-Kompatiblität für die UI
+              // Weitere Felder werden später durch getUserProfile ergänzt
+            };
+          });
+          
+          console.log(`${applications.length} Bewerbungen für Aufgabe ${taskId} gefunden`);
+          
+          // Jetzt erweitern wir die Bewerbungen um Benutzer-Details
+          const enrichedApplications = await Promise.all(
+            applications.map(async (app: any) => {
+              try {
+                // Zuerst in userProfiles nachschauen
+                let userProfileDoc = await getDoc(doc(db, 'userProfiles', app.applicantId));
+                
+                // Wenn nicht gefunden, versuche es in der users-Sammlung
+                if (!userProfileDoc.exists()) {
+                  console.log(`Benutzerprofil nicht in userProfiles gefunden, versuche users für ${app.applicantId}`);
+                  userProfileDoc = await getDoc(doc(db, 'users', app.applicantId));
+                }
+                
+                if (userProfileDoc.exists()) {
+                  const userData = userProfileDoc.data();
+                  console.log(`Benutzerprofil gefunden für ${app.applicantId}:`, userData);
+                  return {
+                    ...app,
+                    name: userData.displayName || 'Unbekannter Benutzer',
+                    applicantName: userData.displayName || 'Unbekannter Benutzer',
+                    photoURL: userData.photoURL,
+                    applicantPhotoURL: userData.photoURL,
+                    avatarUrl: userData.avatarUrl,
+                    applicantAvatarUrl: userData.avatarUrl,
+                    avatarBase64: userData.avatarBase64,
+                    applicantAvatarBase64: userData.avatarBase64,
+                  };
+                }
+                return app;
+              } catch (error) {
+                console.error("Fehler beim Laden des Benutzerprofils:", error);
+                return app;
+              }
+            })
+          );
+          
+          console.log("Erweiterte Bewerbungen:", enrichedApplications);
+          
+          // Erstelle das Task-Objekt mit den geladenen Bewerbungen
+          const loadedTask: Task = {
             id: taskDoc.id,
-            ...taskData,
+            title: taskData.title || '',
+            description: taskData.description || '',
+            category: taskData.category || '',
+            price: taskData.price || 0,
+            status: taskData.status || 'open',
+            creatorId: taskData.creatorId || '',
+            createdAt: taskData.createdAt,
+            // Optional fields
+            creatorName: taskData.creatorName,
+            creatorPhotoURL: taskData.creatorPhotoURL,
+            creatorRating: taskData.creatorRating,
+            assignedUserId: taskData.assignedUserId,
+            requirements: taskData.requirements,
+            location: taskData.location,
+            locationCoordinates: taskData.locationCoordinates,
+            updatedAt: taskData.updatedAt,
+            timePreference: taskData.timePreference,
+            timePreferenceDate: taskData.timePreferenceDate,
+            isLocationShared: taskData.isLocationShared || false,
+            // Arrays - Wir setzen applications auf die erweiterten Bewerbungen
+            // und applicants für rückwärtskompatibilität auf die gleichen Daten
+            applications: enrichedApplications,
+            applicants: enrichedApplications,
             // Garantiere, dass imageUrls immer ein Array ist
             imageUrls: imageUrls,
             // Stelle sicher, dass die Abwärtskompatibilität gewährleistet ist
@@ -227,6 +340,84 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
     fetchTask();
   }, [taskId, editMode, user]);
 
+  // URL-Parameter verarbeiten und ggf. Tab für Bewerbungen öffnen oder Bewertungsdialog anzeigen
+  useEffect(() => {
+    console.log("Prüfe URL-Parameter in TaskDetailScreen:", location);
+    console.log("URL search params:", window.location.search);
+    
+    // Verwende URLSearchParams für korrekte URL-Parameter-Extraktion
+    const urlParams = new URLSearchParams(window.location.search);
+    const tabParam = urlParams.get('tab');
+    const showReviewParam = urlParams.get('showReview');
+    
+    console.log("Tab-Parameter aus URL:", tabParam);
+    console.log("showReview-Parameter aus URL:", showReviewParam);
+    
+    // Bewertungsdialog öffnen, wenn der showReview-Parameter vorhanden ist
+    if (showReviewParam === 'true' && task && !loading && task.status === 'completed') {
+      console.log("'showReview=true' Parameter erkannt - Öffne Bewertungsdialog");
+      
+      // Prüfe, ob der Benutzer relevant für die Bewertung ist
+      if (user) {
+        const isTaskCreator = task.creatorId === user.uid;
+        const isAssignedUser = task.assignedUserId === user.uid;
+        
+        if (isTaskCreator || isAssignedUser) {
+          console.log("Benutzer ist relevant für die Bewertung - Öffne Dialog");
+          
+          // Kurze Verzögerung, damit die Seite vollständig geladen ist
+          setTimeout(() => {
+            setIsReviewDialogOpen(true);
+          }, 300);
+        } else {
+          console.log("Benutzer ist nicht relevant für die Bewertung");
+        }
+      }
+    }
+    
+    // Prüfen auf URL-Parameter "tab=applications" mit URLSearchParams
+    if (tabParam === 'applications') {
+      console.log("'tab=applications' Parameter erkannt - Öffne Bewerber-Tab");
+      setShowApplicationsTab(true);
+      
+      // Automatisch die Bewerberauswahl öffnen, wenn der Task geladen ist
+      if (task && !loading) {
+        console.log("Task geladen, prüfe ob Bewerberauswahl möglich ist");
+        
+        // Bewerbungen können entweder im applications- oder im applicants-Feld gespeichert sein
+        const applications = task.applications || task.applicants || [];
+        const hasApplications = Array.isArray(applications) && applications.length > 0;
+        
+        // Für den Task-Ersteller: Bewerberdialog öffnen
+        if (isTaskCreator && hasApplications) {
+          console.log("Öffne automatisch die Bewerberliste für den Task-Ersteller mit", applications.length, "Bewerbern");
+          
+          // Aktualisiere das Task-Objekt, um sicherzustellen, dass applicants gesetzt ist
+          if (!task.applicants && task.applications) {
+            const updatedTask = {
+              ...task,
+              applicants: task.applications
+            };
+            setTask(updatedTask);
+          }
+          
+          // Dialog mit kurzer Verzögerung öffnen, damit die Seite vollständig geladen ist
+          setTimeout(() => {
+            setApplicantSelectionOpen(true);
+            setIsSelectingApplicant(true);
+          }, 300);
+        } else {
+          console.log("Öffne keine Bewerberliste, Bedingungen nicht erfüllt:", 
+            { isTaskCreator, hasApplications });
+        }
+      } else {
+        console.log("Task noch nicht geladen oder im Ladevorgang");
+      }
+    } else {
+      console.log("Kein tab=applications Parameter gefunden");
+    }
+  }, [location, window.location.search, task, loading, isTaskCreator, user]);
+  
   // Bottom Navigation ausblenden, wenn die Detailansicht geöffnet ist
   useEffect(() => {
     // Navigation ausblenden, wenn die Komponente gemountet wird
@@ -235,8 +426,31 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
     return () => {
       // Navigation wieder anzeigen, wenn die Komponente unmounted wird
       showNav();
+      
+      // Wenn der Task-Status 'completed' ist und der Parameter showReview=true vorhanden war,
+      // aber der Dialog nicht mehr geöffnet ist, dann sende eine Erinnerungsbenachrichtigung
+      // Prüfe, ob eine Bewertung möglich ist und eine Erinnerung gesendet werden sollte
+      if (task && user && task.status === 'completed' && 
+          window.location.search.includes('showReview=true') && 
+          !isReviewDialogOpen) {
+        
+        try {
+          // Prüfe, ob die Bewertung für den aktuellen Benutzer relevant ist
+          // (entweder als Ersteller oder als zugewiesener Benutzer)
+          const isTaskCreator = task.creatorId === user.uid;
+          const isAssignedUser = task.assignedUserId === user.uid;
+          
+          if ((isTaskCreator || isAssignedUser) && user.uid && task.id && task.title) {
+            console.log("Benutzer hat die Seite verlassen ohne zu bewerten - Sende Erinnerung");
+            // Sende Erinnerungsbenachrichtigung mit ID des aktuellen Benutzers
+            createReviewReminderNotification(user.uid, task.id, task.title);
+          }
+        } catch (error) {
+          console.error("Fehler beim Senden der Bewertungserinnerung:", error);
+        }
+      }
     };
-  }, [hideNav, showNav]);
+  }, [hideNav, showNav, task, user, isReviewDialogOpen]);
   
   // Automatisches Scrollen zum Ende der Kommentare
   useEffect(() => {
@@ -246,9 +460,18 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
     
     // Überprüfung, ob der aktuelle Benutzer sich bereits auf den Task beworben hat
     if (task && user) {
-      const hasUserApplied = task.applicants && 
-        Array.isArray(task.applicants) && 
-        task.applicants.some((app: any) => app.applicantId === user.id);
+      // Bewerbungen können entweder im applications- oder im applicants-Feld gespeichert sein
+      const applications = task.applications || task.applicants || [];
+      
+      const hasUserApplied = Array.isArray(applications) && 
+        applications.some((app: any) => app.applicantId === user.id);
+      
+      console.log("Prüfe Bewerbungsstatus für User", user.id, ":", 
+        { 
+          hasApplied: hasUserApplied,
+          applicationsCount: Array.isArray(applications) ? applications.length : 0 
+        });
+      
       setHasApplied(hasUserApplied || false);
     }
   }, [comments, task, user]);
@@ -351,7 +574,22 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
   const handleOpenApplicantSelection = () => {
     if (!task || !isTaskCreator) return;
     
-    if (!task.applicants || task.applicants.length === 0) {
+    console.log("handleOpenApplicantSelection aufgerufen - Task:", task);
+    
+    // Debug-Ausgabe zum Prüfen der Bewerbungen im Task-Objekt
+    console.log("Task-Objekt:", task);
+    console.log("Task.applications:", task.applications);
+    console.log("Task.applicants:", task.applicants);
+    
+    // Bewerbungen können entweder im applications- oder im applicants-Feld gespeichert sein
+    const applications = task.applications || task.applicants || [];
+    const hasApplications = Array.isArray(applications) && applications.length > 0;
+    
+    console.log("Bewerber gefunden:", hasApplications, "Anzahl:", Array.isArray(applications) ? applications.length : 0);
+    
+    // Prüfe, ob Bewerbungen existieren
+    if (!hasApplications) {
+      console.log("Keine Bewerber gefunden, zeige Toast-Nachricht");
       toast({
         title: "Keine Bewerber",
         description: "Es gibt noch keine Bewerber für diese Aufgabe.",
@@ -360,8 +598,24 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
       return;
     }
     
+    console.log("Öffne Bewerber-Dialog mit", applications.length, "Bewerbern");
+    
+    // Aktualisiere das Task-Objekt, um sicherzustellen, dass applicants gesetzt ist
+    if (!task.applicants && task.applications) {
+      // Kopie des aktuellen Tasks erstellen und applicants setzen
+      const updatedTask = {
+        ...task,
+        applicants: task.applications
+      };
+      // Task-Objekt aktualisieren
+      setTask(updatedTask);
+    }
+    
     setApplicantSelectionOpen(true);
     setIsSelectingApplicant(true);
+    
+    // Setze auch showApplicationsTab, um den Button hervorzuheben
+    setShowApplicationsTab(true);
   };
   
   // Funktion zum Schließen der Bewerberauswahl
@@ -523,7 +777,7 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
   };
   
   // Kommentar senden
-  const handleSubmitComment = async (e: React.FormEvent) => {
+  const handleSubmitComment = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if ((!newComment.trim() && !selectedImage) || !user) return;
     
@@ -583,7 +837,7 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
         variant: 'destructive',
       });
     }
-  };
+  }, [commentService, commentsEndRef, fileInputRef, newComment, replyTo, selectedImage, setNewComment, setReplyTo, setSelectedImage, setUploadingImage, t, taskId, toast, uploadChatImage, user]);
   
   // Task-Aktualisierung nach Speichern im Modal
   const handleTaskUpdated = () => {
@@ -594,9 +848,18 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
             const taskData = taskDoc.data();
             const imageUrls = Array.isArray(taskData.imageUrls) ? taskData.imageUrls : [];
             
-            const updatedTask = {
+            // Typsichere Konvertierung des Task-Objekts
+            const updatedTask: Task = {
               id: taskDoc.id,
-              ...taskData,
+              title: taskData.title || '',
+              description: taskData.description || '',
+              category: taskData.category || '',
+              price: taskData.price || 0,
+              status: taskData.status || 'open',
+              creatorId: taskData.creatorId || '',
+              creatorName: taskData.creatorName || '',
+              createdAt: taskData.createdAt,
+              location: taskData.location,
               imageUrls: imageUrls,
               imageUrl: taskData.imageUrl || (imageUrls.length > 0 ? imageUrls[0] : null)
             };
@@ -610,7 +873,7 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
           }
         })
         .catch((error) => {
-          console.error("Fehler beim Neuladen der Aufgabe:", error);
+          console.error("Fehler beim Neuladen der Aufgabe:", error instanceof Error ? error.message : String(error));
         });
     }
   };
@@ -619,25 +882,26 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
   const handleClose = () => {
     // Navigation wieder anzeigen, wenn wir zurückgehen
     showNav();
-    goBack('/tasks');
+    goBack();
   };
 
   // Antworte auf einen Kommentar
-  const handleReplyClick = (comment: TaskComment) => {
+  // Mit useCallback memoizierte Funktionen für bessere Performance
+  const handleReplyClick = useCallback((comment: TaskComment) => {
     setReplyTo(comment);
     // Fokussiere das Eingabefeld
     setTimeout(() => {
       inputRef.current?.focus();
     }, 100);
-  };
+  }, []);
   
   // Abbrechen der Antwort
-  const handleCancelReply = () => {
+  const handleCancelReply = useCallback(() => {
     setReplyTo(null);
-  };
+  }, []);
 
-  // Zeit-Information formatieren
-  const formatTimeInfo = (timeInfo: any) => {
+  // Zeit-Information formatieren - memoiziert für bessere Performance
+  const formatTimeInfo = useCallback((timeInfo: any) => {
     if (!timeInfo) return null;
     
     if (timeInfo.isFlexible) {
@@ -654,10 +918,10 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
     }
     
     return null;
-  };
+  }, [t]);
 
-  // Berechnung des Erstellungsdatums für Kommentare
-  const getFormattedDate = (timestamp: any) => {
+  // Berechnung des Erstellungsdatums für Kommentare - memoiziert für bessere Performance
+  const getFormattedDate = useCallback((timestamp: any) => {
     try {
       if (!timestamp) return '';
       
@@ -670,41 +934,44 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
       console.error('Error formatting date:', err);
       return '';
     }
-  };
+  }, []);
 
-  // Konvertiere die Kommentare vom Service-Format in unser lokales Format
-  const adaptedComments: TaskComment[] = comments.map(comment => {
-    // Basiskommentar mit Hauptdaten
-    const adaptedComment: TaskComment = {
-      id: comment.id,
-      taskId: comment.taskId,
-      userId: comment.authorId,
-      userName: comment.authorName,
-      userPhotoURL: comment.authorAvatar,
-      content: comment.content,
-      createdAt: comment.timestamp,
-      parentId: comment.parentId,
-      imageUrl: comment.imageUrl,
-      replies: []
-    };
-    
-    // Füge auch die Antworten hinzu, falls vorhanden
-    if (comment.replies && comment.replies.length > 0) {
-      adaptedComment.replies = comment.replies.map(reply => ({
-        id: reply.id,
-        taskId: reply.taskId,
-        userId: reply.authorId,
-        userName: reply.authorName,
-        userPhotoURL: reply.authorAvatar,
-        content: reply.content,
-        createdAt: reply.timestamp,
-        parentId: reply.parentId,
-        imageUrl: reply.imageUrl
-      }));
-    }
-    
-    return adaptedComment;
-  });
+  // Konvertiere die Kommentare vom Service-Format in unser lokales Format mithilfe von useMemo
+  // für bessere Performance bei vielen Kommentaren
+  const adaptedComments: TaskComment[] = useMemo(() => {
+    return comments.map(comment => {
+      // Basiskommentar mit Hauptdaten
+      const adaptedComment: TaskComment = {
+        id: comment.id,
+        taskId: comment.taskId,
+        userId: comment.authorId,
+        userName: comment.authorName,
+        userPhotoURL: comment.authorAvatar,
+        content: comment.content,
+        createdAt: comment.timestamp,
+        parentId: comment.parentId,
+        imageUrl: comment.imageUrl,
+        replies: []
+      };
+      
+      // Füge auch die Antworten hinzu, falls vorhanden
+      if (comment.replies && comment.replies.length > 0) {
+        adaptedComment.replies = comment.replies.map(reply => ({
+          id: reply.id,
+          taskId: reply.taskId,
+          userId: reply.authorId,
+          userName: reply.authorName,
+          userPhotoURL: reply.authorAvatar,
+          content: reply.content,
+          createdAt: reply.timestamp,
+          parentId: reply.parentId,
+          imageUrl: reply.imageUrl
+        }));
+      }
+      
+      return adaptedComment;
+    });
+  }, [comments]);
   
   // Kommentare sind bereits vom Hook organisiert, wir brauchen nur die Root-Kommentare
   const rootComments = adaptedComments;
@@ -754,7 +1021,7 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
                 {/* Bild anzeigen, falls vorhanden */}
                 {comment.imageUrl && (
                   <div className="mt-2 mb-3">
-                    <ZoomableImage 
+                    <ZoomableLazyImage 
                       src={comment.imageUrl} 
                       alt="Kommentar-Bild" 
                       maxHeight={240}
@@ -903,14 +1170,11 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
         <div className="flex-1 overflow-y-auto pb-[65px] task-detail-content">
           {loading ? (
             <div className="p-4">
-              <Skeleton className="h-64 w-full" />
-              <div className="p-4">
-                <Skeleton className="h-8 w-3/4 mb-2" />
-                <Skeleton className="h-4 w-1/2 mb-6" />
-                <Skeleton className="h-4 w-full mb-2" />
-                <Skeleton className="h-4 w-full mb-2" />
-                <Skeleton className="h-4 w-3/4" />
-              </div>
+              <LoadingScreen 
+                label={t('common.loading')}
+                center={true}
+                size="large"
+              />
             </div>
           ) : error || !task ? (
             <div className="flex items-center justify-center h-full">
@@ -1010,10 +1274,12 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
                     {(isTaskCreator || isSelectedApplicant || (task?.status === 'assigned' && hasApplied)) && task?.location && (
                       <LocationShareButton
                         taskId={task.id}
-                        location={task.location}
+                        location={typeof task.location === 'object' && 'coordinates' in task.location 
+                          ? task.location.coordinates 
+                          : (typeof task.location === 'object' ? task.location : undefined)}
                         address={task.address}
-                        isLocationShared={task.isLocationShared || false}
-                        isCreator={isTaskCreator}
+                        isLocationShared={task.isLocationShared === true}
+                        isCreator={isTaskCreator === true}
                       />
                     )}
                   </div>
@@ -1095,16 +1361,30 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
                       {task?.status === 'open' && (
                         <Button
                           onClick={handleOpenApplicantSelection}
-                          variant="outline"
-                          className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                          variant={showApplicationsTab ? "default" : "outline"}
+                          className={
+                            showApplicationsTab 
+                              ? "bg-indigo-600 text-white hover:bg-indigo-700" 
+                              : "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100"
+                          }
                         >
                           <UserCheck className="mr-2 h-4 w-4" />
                           {t('tasks.selectApplicants')}
-                          {task?.applicants && Array.isArray(task.applicants) && task.applicants.length > 0 && (
-                            <Badge variant="secondary" className="ml-2 bg-indigo-200 text-indigo-800">
-                              {task.applicants.length}
-                            </Badge>
-                          )}
+                          {/* Bewerbungen können entweder im applications- oder im applicants-Feld gespeichert sein */}
+                          {(() => {
+                            const applications = task.applications || task.applicants || [];
+                            const hasApplications = Array.isArray(applications) && applications.length > 0;
+                            
+                            return hasApplications && (
+                              <Badge variant="secondary" className={
+                                showApplicationsTab 
+                                  ? "ml-2 bg-white text-indigo-800" 
+                                  : "ml-2 bg-indigo-200 text-indigo-800"
+                              }>
+                                {applications.length}
+                              </Badge>
+                            );
+                          })()}
                         </Button>
                       )}
                       
@@ -1135,9 +1415,12 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
                   {/* Kommentarliste */}
                   <div className="space-y-4">
                     {commentsLoading ? (
-                      <div className="text-center py-8">
-                        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-                        <p className="text-gray-500">{t('tasks.loadingComments')}</p>
+                      <div className="py-8">
+                        <LoadingScreen 
+                          label={t('tasks.loadingComments')}
+                          size="small"
+                          center={true}
+                        />
                       </div>
                     ) : commentsError ? (
                       <div className="text-center py-8 text-red-500">
@@ -1322,7 +1605,7 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
           taskId={task.id}
           taskTitle={task.title}
           taskCreatorId={task.creatorId}
-          taskCreatorName={task.creatorName}
+          taskCreatorName={task.creatorName || ''}
         />
       )}
       
@@ -1333,6 +1616,17 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
           onClose={() => setIsEditModalOpen(false)}
           task={task}
           onTaskUpdated={handleTaskUpdated}
+        />
+      )}
+      
+      {/* Bewertungsdialog */}
+      {task && task.taskerId && (
+        <ReviewDialog 
+          isOpen={isReviewDialogOpen}
+          onClose={() => setIsReviewDialogOpen(false)}
+          taskId={task.id}
+          userId={task.taskerId}
+          taskTitle={task.title}
         />
       )}
       
@@ -1348,13 +1642,29 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
             </DialogHeader>
             
             <div className="py-4">
-              {task.applicants && task.applicants.length > 0 ? (
-                <div className="space-y-4">
-                  {task.applicants.map((applicant: any) => (
-                    <div 
-                      key={applicant.applicantId || applicant.userId} 
-                      className="flex items-start p-4 border rounded-lg hover:bg-gray-50 transition-colors"
-                    >
+              {/* Bewerbungen können entweder im applications- oder im applicants-Feld gespeichert sein */}
+              {(() => {
+                // Bewerbungen aus einem der möglichen Felder holen
+                const applications = task.applications || task.applicants || [];
+                const hasApplications = Array.isArray(applications) && applications.length > 0;
+                
+                console.log("Bewerber im Dialog:", hasApplications ? applications.length : 0);
+                
+                if (!hasApplications) {
+                  return (
+                    <div className="text-center py-6 text-gray-500">
+                      <p>Keine Bewerber für diese Aufgabe verfügbar.</p>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <div className="space-y-4">
+                    {applications.map((applicant: any) => (
+                      <div 
+                        key={applicant.applicantId || applicant.userId} 
+                        className="flex items-start p-4 border rounded-lg hover:bg-gray-50 transition-colors"
+                      >
                       {/* Moderne Avatar-Darstellung mit UserAvatar-Komponente */}
                       <div className="flex-shrink-0 mr-3">
                         <UserAvatar 
@@ -1443,13 +1753,10 @@ const TaskDetailScreen = ({ editMode = false }: TaskDetailScreenProps) => {
                         </div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-6 text-gray-500">
-                  <p>Keine Bewerber für diese Aufgabe verfügbar.</p>
-                </div>
-              )}
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
             
             <DialogFooter className="sm:justify-start">

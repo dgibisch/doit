@@ -51,8 +51,6 @@ interface FirebaseUser {
  */
 export const getUserProfileStats = async (userId: string) => {
   try {
-    console.log("ProfileService: Starte Abfrage für User-ID:", userId);
-    
     // Benutzergrundprofil abrufen
     const userRef = doc(db, "users", userId);
     const userSnap = await getDoc(userRef);
@@ -134,10 +132,6 @@ export const getUserProfileStats = async (userId: string) => {
       
       // Zu den abgeschlossenen Tasks hinzufügen
       allCompletedTasks.push(...doneTasks);
-      
-      if (userId === 'VfRP6kACcOX0q4sSL4Yzyy4V3Tc2') {
-        console.log("Gefundene Tasks mit status=done:", doneTasks.length);
-      }
     } catch (error) {
       console.warn("Fehler beim Abrufen von Tasks mit status=done:", error);
     }

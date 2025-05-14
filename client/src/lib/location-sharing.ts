@@ -9,8 +9,7 @@ import {
   Timestamp 
 } from "firebase/firestore";
 
-// Firestore DB Instanz
-const db = getFirestore();
+import { db } from '@/lib/firebase';
 
 /**
  * Anfrage zum Freigeben des Standorts senden

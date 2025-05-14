@@ -5,6 +5,8 @@
     "loading": "Loading...",
     "save": "Save",
     "cancel": "Cancel",
+    "addressLocation": "Address / Location",
+    "addressPlaceholder": "Enter address or location",
     "delete": "Delete",
     "edit": "Edit",
     "back": "Back",
@@ -65,6 +67,7 @@
     "rating": "Rating",
     "reviews": "Reviews",
     "noReviews": "No reviews yet",
+    "noReviewsYet": "No reviews yet for this user",
     "showProfileOf": "View {{name}}'s profile",
     "viewProfile": "View profile",
     "uploadPhoto": "Upload Photo",
@@ -83,6 +86,12 @@
   },
   
   "tasks": {
+    "refreshing": "Refreshing",
+    "refreshingDescription": "Updating tasks...",
+    "refreshed": "Updated",
+    "refreshedDescription": "Tasks have been updated",
+    "refreshError": "Error",
+    "refreshErrorDescription": "Error updating tasks",
     "createTask": "Create Task",
     "newTask": "Create New Task",
     "comments": "Comments",
@@ -90,6 +99,11 @@
     "beFirstToComment": "Be the first to leave a comment!",
     "loadingComments": "Loading comments...",
     "appliedOn": "Applied on",
+    "category": "Category",
+    "selectCategory": "Select category",
+    "budget": "Budget",
+    "descriptionPlaceholder": "Describe your task in detail...",
+    "whenShouldTaskBeCompleted": "When should the task be completed?",
     "createTaskDescription": "Fill out the form to publish a new task in the community.",
     "editTask": "Edit Task",
     "myTasks": "My Tasks",
@@ -262,12 +276,54 @@
   },
   
   "notifications": {
-    "newMessage": "New message from {{sender}}",
-    "taskAccepted": "Your application has been accepted",
-    "taskCompleted": "Task has been completed",
-    "newApplication": "New application for your task",
-    "reviewReceived": "You received a new review",
-    "locationShared": "Location has been shared"
+    "title": "Notifications",
+    "all": "All",
+    "actionRequired": "Action Required",
+    "unread": "Unread",
+    "empty": "No notifications",
+    "newMessage": "New Message",
+    "taskMatched": "Task Assigned",
+    "taskCompleted": "Task Completed",
+    "reviewRequired": "Review Required",
+    "reviewReminder": "Reminder: Review Pending",
+    "newTaskNearby": "New Task Nearby",
+    "applicationReceived": "New Application Received",
+    "reviewReceived": "New Review Received",
+    "newNotification": "New Notification",
+    "leaveReview": "Leave Review",
+    "viewMessage": "View Message"
+  },
+  
+  "search": {
+    "tasks": "Search tasks..."
+  },
+  
+  "filter": {
+    "filters": "Filters",
+    "category": "Category",
+    "maxDistance": "Maximum Distance",
+    "reset": "Reset",
+    "apply": "Apply"
+  },
+  
+  "sort": {
+    "sortBy": "Sort by",
+    "newestFirst": "Newest first",
+    "oldestFirst": "Oldest first",
+    "highestPrice": "Highest price",
+    "lowestPrice": "Lowest price",
+    "nearestFirst": "Nearest first"
+  },
+  
+  "categories": {
+    "all": "All categories",
+    "cleaning": "Cleaning",
+    "moving": "Moving",
+    "delivery": "Delivery",
+    "assembly": "Assembly",
+    "gardening": "Gardening",
+    "tutoring": "Tutoring",
+    "other": "Other"
   },
   
   "errors": {
@@ -389,6 +445,30 @@
     "monthsAgo_plural": "{{count}} months ago",
     "yearsAgo": "{{count}} year ago",
     "yearsAgo_plural": "{{count}} years ago"
+  },
+  
+  "review": {
+    "for": "for",
+    "leaveReview": "Leave a Review",
+    "rateExperience": "Rate your experience",
+    "success": "Review Submitted",
+    "successDescription": "Thank you for your review!",
+    "error": "Review Error",
+    "errorDescription": "Your review could not be saved",
+    "submitReview": "Submit Review",
+    "rate": "Rate",
+    "satisfactionWithTaskCreator": "How satisfied were you with the task creator?",
+    "satisfactionWithTaskExecution": "How satisfied were you with the task execution?",
+    "yourFeedback": "Your Feedback (optional)",
+    "writeComment": "Write a comment about your experience (optional)...",
+    "ratingRequired": "Rating Required",
+    "pleaseRateWithStars": "Please provide a star rating",
+    "loginRequired": "You must be logged in to leave a review"
+  },
+  
+  "general": {
+    "task": "Task",
+    "user": "User"
   },
   
   "location": {

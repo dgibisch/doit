@@ -1,4 +1,5 @@
 import { getCategoryImage } from '@/lib/categoryImages';
+import LazyImage from '@/components/ui/LazyImage';
 
 interface TaskImageProps {
   imageUrl?: string;
@@ -23,10 +24,11 @@ const TaskImage: React.FC<TaskImageProps> = ({
   
   return (
     <div className={`relative ${className}`}>
-      <img 
+      <LazyImage 
         src={displayImage} 
         alt={title || category} 
         className="w-full h-full object-cover" 
+        placeholder={getCategoryImage(category)}
       />
       {!imageUrl && showCategoryOverlay && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20">

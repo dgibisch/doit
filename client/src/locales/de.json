@@ -5,6 +5,8 @@
     "loading": "Wird geladen...",
     "save": "Speichern",
     "cancel": "Abbrechen",
+    "addressLocation": "Adresse / Standort",
+    "addressPlaceholder": "Adresse oder Standort eingeben",
     "delete": "Löschen",
     "edit": "Bearbeiten",
     "back": "Zurück",
@@ -65,6 +67,7 @@
     "rating": "Bewertung",
     "reviews": "Bewertungen",
     "noReviews": "Noch keine Bewertungen",
+    "noReviewsYet": "Dieser Benutzer hat noch keine Bewertungen erhalten",
     "showProfileOf": "Profil von {{name}} anzeigen",
     "viewProfile": "Profil anzeigen",
     "uploadPhoto": "Foto hochladen",
@@ -83,6 +86,12 @@
   },
   
   "tasks": {
+    "refreshing": "Aktualisiere",
+    "refreshingDescription": "Aufgaben werden aktualisiert...",
+    "refreshed": "Aktualisiert",
+    "refreshedDescription": "Aufgaben wurden aktualisiert",
+    "refreshError": "Fehler",
+    "refreshErrorDescription": "Fehler beim Aktualisieren der Aufgaben",
     "createTask": "Aufgabe erstellen",
     "newTask": "Neue Aufgabe erstellen",
     "comments": "Kommentare",
@@ -90,6 +99,11 @@
     "beFirstToComment": "Sei der Erste, der einen Kommentar hinterlässt!",
     "loadingComments": "Kommentare werden geladen...",
     "appliedOn": "Beworben am",
+    "category": "Kategorie",
+    "selectCategory": "Kategorie auswählen",
+    "budget": "Budget",
+    "descriptionPlaceholder": "Beschreibe deine Aufgabe detailliert...",
+    "whenShouldTaskBeCompleted": "Wann soll die Aufgabe erledigt werden?",
     "createTaskDescription": "Fülle das Formular aus, um eine neue Aufgabe in der Community zu veröffentlichen.",
     "editTask": "Aufgabe bearbeiten",
     "myTasks": "Meine Aufgaben",
@@ -261,12 +275,54 @@
   },
   
   "notifications": {
-    "newMessage": "Neue Nachricht von {{sender}}",
-    "taskAccepted": "Deine Bewerbung wurde angenommen",
-    "taskCompleted": "Aufgabe wurde abgeschlossen",
-    "newApplication": "Neue Bewerbung für deine Aufgabe",
-    "reviewReceived": "Du hast eine neue Bewertung erhalten",
-    "locationShared": "Der Standort wurde freigegeben"
+    "title": "Benachrichtigungen",
+    "all": "Alle",
+    "actionRequired": "Erfordert Aktion",
+    "unread": "Ungelesen",
+    "empty": "Keine Benachrichtigungen vorhanden",
+    "newMessage": "Neue Nachricht",
+    "taskMatched": "Aufgabe zugewiesen",
+    "taskCompleted": "Aufgabe abgeschlossen",
+    "reviewRequired": "Bewertung erforderlich",
+    "reviewReminder": "Erinnerung: Bewertung ausstehend",
+    "newTaskNearby": "Neue Aufgabe in der Nähe",
+    "applicationReceived": "Neue Bewerbung erhalten",
+    "reviewReceived": "Neue Bewertung erhalten",
+    "newNotification": "Neue Benachrichtigung",
+    "leaveReview": "Bewertung abgeben",
+    "viewMessage": "Nachricht ansehen"
+  },
+  
+  "search": {
+    "tasks": "Aufgaben suchen..."
+  },
+  
+  "filter": {
+    "filters": "Filter",
+    "category": "Kategorie",
+    "maxDistance": "Maximale Entfernung",
+    "reset": "Zurücksetzen",
+    "apply": "Anwenden"
+  },
+  
+  "sort": {
+    "sortBy": "Sortieren nach",
+    "newestFirst": "Neueste zuerst",
+    "oldestFirst": "Älteste zuerst",
+    "highestPrice": "Höchster Preis",
+    "lowestPrice": "Niedrigster Preis",
+    "nearestFirst": "Nächste zuerst"
+  },
+  
+  "categories": {
+    "all": "Alle Kategorien",
+    "cleaning": "Reinigung",
+    "moving": "Umzug",
+    "delivery": "Lieferung",
+    "assembly": "Montage",
+    "gardening": "Gartenarbeit",
+    "tutoring": "Nachhilfe",
+    "other": "Sonstiges"
   },
   
   "errors": {
@@ -388,6 +444,30 @@
     "monthsAgo_plural": "vor {{count}} Monaten",
     "yearsAgo": "vor {{count}} Jahr",
     "yearsAgo_plural": "vor {{count}} Jahren"
+  },
+  
+  "review": {
+    "for": "für",
+    "leaveReview": "Bewertung abgeben",
+    "rateExperience": "Bewerte deine Erfahrung",
+    "success": "Bewertung erfolgreich abgegeben",
+    "successDescription": "Vielen Dank für deine Bewertung!",
+    "error": "Fehler bei der Bewertung",
+    "errorDescription": "Deine Bewertung konnte nicht gespeichert werden",
+    "submitReview": "Bewertung abschicken",
+    "rate": "Bewerte",
+    "satisfactionWithTaskCreator": "Wie zufrieden warst du mit dem Auftraggeber dieser Aufgabe?",
+    "satisfactionWithTaskExecution": "Wie zufrieden warst du mit der Durchführung dieser Aufgabe?",
+    "yourFeedback": "Dein Feedback (optional)",
+    "writeComment": "Schreibe einen Kommentar zu deiner Erfahrung (optional)...",
+    "ratingRequired": "Bewertung erforderlich",
+    "pleaseRateWithStars": "Bitte gib eine Sternebewertung ab",
+    "loginRequired": "Du musst angemeldet sein, um eine Bewertung abzugeben"
+  },
+  
+  "general": {
+    "task": "Aufgabe",
+    "user": "Benutzer"
   },
   
   "location": {

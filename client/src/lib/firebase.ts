@@ -29,6 +29,7 @@ import {
   setDoc,
   arrayUnion,
   arrayRemove,
+  limit,
   type Firestore
 } from "firebase/firestore";
 import { getStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL, type FirebaseStorage } from "firebase/storage";
@@ -45,15 +46,7 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-// Log wichtige Konfigurationsdetails, die für die Fehlersuche relevant sind
-console.log("Firebase bucket:", `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.appspot.com`);
-
-// Log Firebase configuration (without sensitive values)
-console.log("Firebase initializing with:", { 
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  hasApiKey: !!import.meta.env.VITE_FIREBASE_API_KEY,
-  hasAppId: !!import.meta.env.VITE_FIREBASE_APP_ID
-});
+// Firebase-Konfiguration ist eingerichtet - keine Debug-Logs im Produktionscode
 
 // Initialize Firebase
 let app: FirebaseApp;
@@ -62,31 +55,22 @@ let db: Firestore;
 let storage: FirebaseStorage;
 
 try {
-  // Firebase App initialisieren mit detailliertem Logging
+  // Firebase App initialisieren
   app = initializeApp(firebaseConfig);
-  console.log("Firebase App erfolgreich initialisiert mit Projekt-ID:", import.meta.env.VITE_FIREBASE_PROJECT_ID);
   
   // Firebase Auth initialisieren
   auth = getAuth(app);
-  console.log("Firebase Auth erfolgreich initialisiert");
   
   // Firestore initialisieren
   db = getFirestore(app);
-  console.log("Firebase Firestore erfolgreich initialisiert");
   
-  // Storage mit verbesserter Fehlerbehandlung initialisieren
+  // Storage initialisieren
   try {
-    // Storage mit eindeutigem Bucket-Namen initialisieren
     const bucketName = `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.appspot.com`;
-    console.log("Versuche Firebase Storage mit Bucket zu initialisieren:", bucketName);
-    
     storage = getStorage(app);
     
     // Storage-Dienst testen
     const testRef = ref(storage, 'test/connection_test.txt');
-    console.log("Firebase Storage erfolgreich initialisiert und Referenz erstellt:", testRef.fullPath);
-    
-    console.log("Firebase Storage vollständig und erfolgreich initialisiert");
   } catch (storageError) {
     console.error("Firebase Storage Initialisierungsfehler:", storageError);
     console.error("Firebase Storage konnte nicht initialisiert werden. Bitte überprüfen Sie die Firebase Console und aktivieren Sie den Storage-Dienst.");
@@ -663,6 +647,13 @@ export const getUserProfile = async (userId: string, forceRefresh = false) => {
       userData.uid = userId;
     }
     
+    // Stelle sicher, dass unreadNotifications existiert
+    if (userData && userData.unreadNotifications === undefined) {
+      console.log(`Adding missing unreadNotifications field for user ${userId}`);
+      await updateDoc(userRef, { unreadNotifications: 0 });
+      userData.unreadNotifications = 0;
+    }
+    
     return userData;
   } catch (error) {
     console.error(`Error getting user profile for ${userId}:`, error);
@@ -690,25 +681,77 @@ export const usernameExists = async (username: string): Promise<boolean> => {
 // Get all reviews for a user
 export const getUserReviews = async (userId: string) => {
   try {
+    console.log("Fetching reviews for user:", userId);
     const reviewsRef = collection(db, "reviews");
-    const reviewsQuery = query(reviewsRef, where("userId", "==", userId), orderBy("createdAt", "desc"));
+    // Suche nach Reviews, wo der Benutzer der Empfänger ist (userId)
+    const reviewsQuery = query(reviewsRef, where("userId", "==", userId));
     const reviewsSnapshot = await getDocs(reviewsQuery);
     
-    // Get all author details in a single batch to avoid multiple requests
-    const authorIds = new Set(reviewsSnapshot.docs.map(doc => doc.data().authorId));
-    const authorPromises = Array.from(authorIds).map(authorId => getDoc(doc(db, "users", authorId as string)));
+    console.log("Reviews found:", reviewsSnapshot.size);
+    
+    // Falls keine Reviews gefunden wurden, versuche es mit reviewerId als Feldname
+    if (reviewsSnapshot.empty) {
+      console.log("No reviews found with userId, trying receiverId");
+      // Prüfen, ob wir stattdessen receiverId als Feld nutzen sollten
+      const alternativeQuery = query(reviewsRef, where("receiverId", "==", userId));
+      const alternativeSnapshot = await getDocs(alternativeQuery);
+      
+      if (!alternativeSnapshot.empty) {
+        console.log("Found reviews with receiverId:", alternativeSnapshot.size);
+        
+        // Get all reviewer details
+        const reviewerIds = new Set(alternativeSnapshot.docs.map(doc => doc.data().reviewerId));
+        const reviewerPromises = Array.from(reviewerIds).map(reviewerId => getDoc(doc(db, "users", reviewerId as string)));
+        const reviewerDocs = await Promise.all(reviewerPromises);
+        const reviewerData = reviewerDocs.reduce((acc, doc) => {
+          if (doc.exists()) {
+            acc[doc.id] = doc.data();
+          }
+          return acc;
+        }, {} as Record<string, any>);
+        
+        const reviews = alternativeSnapshot.docs.map(doc => {
+          const data = doc.data();
+          const reviewer = reviewerData[data.reviewerId] || {};
+          
+          return {
+            id: doc.id,
+            ...data,
+            authorName: reviewer.displayName || 'Unbekannter Benutzer',
+            authorPhotoURL: reviewer.photoURL || undefined,
+            createdAt: data.createdAt || new Date()
+          };
+        });
+        
+        // Sortiere die Reviews auf Client-Seite nach Datum absteigend
+        return reviews.sort((a, b) => {
+          const dateA = a.createdAt?.seconds || 0;
+          const dateB = b.createdAt?.seconds || 0;
+          return dateB - dateA;
+        });
+      }
+    }
+    
+    // Original-Implementierung, wenn userId Reviews gefunden hat
+    // Get all author/reviewer details in a single batch
+    const authorIds = new Set(reviewsSnapshot.docs.map(doc => doc.data().reviewerId || doc.data().authorId));
+    const authorPromises = Array.from(authorIds).map(authorId => {
+      if (!authorId) return Promise.resolve(null);
+      return getDoc(doc(db, "users", authorId as string));
+    });
     const authorDocs = await Promise.all(authorPromises);
     const authorData = authorDocs.reduce((acc, doc) => {
-      if (doc.exists()) {
+      if (doc && doc.exists()) {
         acc[doc.id] = doc.data();
       }
       return acc;
     }, {} as Record<string, any>);
     
     // Map reviews with author details
-    return reviewsSnapshot.docs.map(doc => {
+    const reviews = reviewsSnapshot.docs.map(doc => {
       const data = doc.data();
-      const author = authorData[data.authorId] || {};
+      const authorId = data.reviewerId || data.authorId;
+      const author = authorData[authorId] || {};
       
       return {
         id: doc.id,
@@ -717,6 +760,13 @@ export const getUserReviews = async (userId: string) => {
         authorPhotoURL: author.photoURL || undefined,
         createdAt: data.createdAt || new Date()
       };
+    });
+    
+    // Sortiere die Reviews auf Client-Seite nach Datum absteigend
+    return reviews.sort((a, b) => {
+      const dateA = a.createdAt?.seconds || 0;
+      const dateB = b.createdAt?.seconds || 0;
+      return dateB - dateA;
     });
   } catch (error) {
     console.error("Error fetching user reviews:", error);
@@ -823,12 +873,29 @@ export const getTasks = async (filters: Record<string, any> = {}) => {
       
       return {
         id: doc.id,
-        ...data,
+        title: data.title || '',
+        description: data.description || '',
+        category: data.category || '',
+        price: data.price || 0,
+        status: data.status || 'open',
+        location: data.location || '',
+        locationCoordinates: data.locationCoordinates,
+        creatorId: data.creatorId || '',
+        creatorName: data.creatorName || '',
+        creatorPhotoURL: data.creatorPhotoURL,
+        creatorRating: data.creatorRating,
+        assignedUserId: data.assignedUserId,
+        requirements: data.requirements || '',
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+        applications: data.applications || [],
+        timePreference: data.timePreference,
+        timePreferenceDate: data.timePreferenceDate,
         // Stelle sicher, dass imageUrls immer ein Array ist
         imageUrls: imageUrls,
         // Stelle sicher, dass alte Tasks mit nur imageUrl auch funktionieren
         imageUrl: data.imageUrl || (imageUrls.length > 0 ? imageUrls[0] : null)
-      };
+      } as Task;
     });
     
     // Apply category filter in memory if needed
@@ -904,7 +971,7 @@ export const getTasks = async (filters: Record<string, any> = {}) => {
     // Even in fallback mode, use batch fetch for creator information
     try {
       // Use the same batch fetch logic for creator profiles
-      const uniqueCreatorIds = Array.from(new Set(simpleTasks.map(task => task.creatorId)));
+      const uniqueCreatorIds = Array.from(new Set(simpleTasks.map(task => (task as Task).creatorId)));
       const creatorProfiles: Record<string, any> = {};
       
       if (uniqueCreatorIds.length > 0) {
@@ -922,7 +989,8 @@ export const getTasks = async (filters: Record<string, any> = {}) => {
       
       // Attach creator info to tasks
       return simpleTasks.map(task => {
-        const creatorProfile = creatorProfiles[task.creatorId];
+        const taskWithTypes = task as Task;
+        const creatorProfile = creatorProfiles[taskWithTypes.creatorId];
         
         return {
           ...task,
@@ -979,13 +1047,24 @@ export const acceptApplication = async (applicationId: string, taskId: string) =
     const taskData = taskSnapshot.data();
     
     const chatRef = collection(db, "chats");
-    return addDoc(chatRef, {
+    const chatDoc = await addDoc(chatRef, {
       taskId,
+      taskTitle: taskData.title,
       participants: [taskData.creatorId, applicationData.applicantId],
       createdAt: serverTimestamp(),
       lastMessage: null,
       lastMessageAt: null
     });
+    
+    // Benachrichtigung für den Bewerber erstellen, dass seine Bewerbung angenommen wurde
+    await createNotification(applicationData.applicantId, NotificationTypes.TASK_MATCHED, {
+      taskId,
+      taskTitle: taskData.title,
+      chatId: chatDoc.id,
+      requiresAction: false
+    });
+    
+    return chatDoc;
   }
 };
 
@@ -1002,10 +1081,33 @@ export const sendMessage = async (chatId: string, userId: string, content: strin
     
     // Update the chat's lastMessage in Firestore
     const chatRef = doc(db, "chats", chatId);
-    await updateDoc(chatRef, {
-      lastMessage: content,
-      lastMessageAt: serverTimestamp()
-    });
+    const chatSnapshot = await getDoc(chatRef);
+    
+    if (chatSnapshot.exists()) {
+      const chatData = chatSnapshot.data();
+      const taskId = chatData.taskId;
+      const taskTitle = chatData.taskTitle || 'Aufgabe';
+      const participants = chatData.participants || [];
+      
+      // Update the chat's lastMessage
+      await updateDoc(chatRef, {
+        lastMessage: content,
+        lastMessageAt: serverTimestamp()
+      });
+      
+      // Send notification to other participants
+      const otherParticipants = participants.filter(id => id !== userId);
+      
+      for (const recipientId of otherParticipants) {
+        await createNotification(recipientId, NotificationTypes.NEW_MESSAGE, {
+          chatId,
+          senderId: userId,
+          taskId,
+          taskTitle,
+          requiresAction: false
+        });
+      }
+    }
     
     return messageDoc.id;
   } catch (error) {
@@ -1123,58 +1225,95 @@ export const getMessages = (chatId: string, callback: (messages: any[]) => void)
   }
 };
 
-// Complete a task and rate
+/**
+ * Schließt eine Aufgabe ab und fügt eine Bewertung hinzu
+ */
 export const completeTask = async (taskId: string, rating: number, review: string) => {
-  const taskRef = doc(db, "tasks", taskId);
-  const taskSnapshot = await getDoc(taskRef);
-  
-  if (taskSnapshot.exists()) {
-    const taskData = taskSnapshot.data();
-    const applicationId = taskData.matchedApplicationId;
+  try {
+    const taskRef = doc(db, "tasks", taskId);
+    const taskSnapshot = await getDoc(taskRef);
     
-    if (applicationId) {
-      const applicationRef = doc(db, "applications", applicationId);
-      const applicationSnapshot = await getDoc(applicationRef);
-      
-      if (applicationSnapshot.exists()) {
-        const applicationData = applicationSnapshot.data();
-        const userId = applicationData.applicantId;
-        
-        // Update task status
-        await updateDoc(taskRef, {
-          status: "completed",
-          completedAt: serverTimestamp()
-        });
-        
-        // Increment user's completedTasks count and update rating
-        const userRef = doc(db, "users", userId);
-        const userSnapshot = await getDoc(userRef);
-        
-        if (userSnapshot.exists()) {
-          const userData = userSnapshot.data();
-          const currentRatingTotal = userData.rating * (userData.ratingCount || 0);
-          const newRatingCount = (userData.ratingCount || 0) + 1;
-          const newRating = (currentRatingTotal + rating) / newRatingCount;
-          
-          await updateDoc(userRef, {
-            completedTasks: increment(1),
-            rating: newRating,
-            ratingCount: newRatingCount
-          });
-        }
-        
-        // Add review
-        const reviewsRef = collection(db, "reviews");
-        await addDoc(reviewsRef, {
-          taskId,
-          reviewerId: taskData.creatorId,
-          userId,
-          rating,
-          content: review,
-          createdAt: serverTimestamp()
-        });
-      }
+    if (!taskSnapshot.exists()) {
+      throw new Error("Aufgabe nicht gefunden");
     }
+    
+    const taskData = taskSnapshot.data();
+    
+    // Prüfen, ob die Aufgabe bereits abgeschlossen ist
+    if (taskData.status === "completed") {
+      throw new Error("Diese Aufgabe wurde bereits abgeschlossen");
+    }
+    
+    // Prüfen, ob ein Tasker zugewiesen wurde
+    if (!taskData.taskerId) {
+      throw new Error("Diese Aufgabe hat keinen zugewiesenen Tasker");
+    }
+    
+    // Aufgabenstatus aktualisieren
+    await updateDoc(taskRef, {
+      status: "completed",
+      completedAt: serverTimestamp(),
+      reviewStatus: "pending" // Neue Status-Property
+    });
+
+    // Bewertungsanforderung als Benachrichtigung für den Ersteller erstellen
+    await createNotification(taskData.creatorId, NotificationTypes.REVIEW_REQUIRED, {
+      taskId,
+      taskTitle: taskData.title,
+      taskerId: taskData.taskerId,
+      requiresAction: true, // Erfordert eine Aktion vom Benutzer
+      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 Tage Zeit
+    });
+
+    // Benachrichtigung für den Tasker erstellen
+    await createNotification(taskData.taskerId, NotificationTypes.TASK_COMPLETED, {
+      taskId,
+      taskTitle: taskData.title
+    });
+    
+    // Tasker-Status aktualisieren (completedTasks und Rating)
+    const userRef = doc(db, "users", taskData.taskerId);
+    const userSnapshot = await getDoc(userRef);
+    
+    if (userSnapshot.exists()) {
+      const userData = userSnapshot.data();
+      const currentRatingTotal = userData.rating * (userData.ratingCount || 0);
+      const newRatingCount = (userData.ratingCount || 0) + 1;
+      const newRating = (currentRatingTotal + rating) / newRatingCount;
+      
+      await updateDoc(userRef, {
+        completedTasks: increment(1),
+        rating: newRating,
+        ratingCount: newRatingCount
+      });
+    }
+    
+    // Benachrichtigung erstellen
+    const notificationsRef = collection(db, "notifications");
+    await addDoc(notificationsRef, {
+      userId: taskData.taskerId,
+      type: "task_completed",
+      taskId: taskId,
+      taskTitle: taskData.title,
+      read: false,
+      createdAt: serverTimestamp()
+    });
+    
+    // Review erstellen für die Bewertung
+    const reviewsRef = collection(db, "reviews");
+    await addDoc(reviewsRef, {
+      taskId,
+      reviewerId: taskData.creatorId,
+      userId: taskData.taskerId,
+      rating,
+      content: review,
+      createdAt: serverTimestamp()
+    });
+    
+    return true;
+  } catch (error) {
+    console.error("Fehler beim Abschließen der Aufgabe:", error);
+    throw error;
   }
 };
 
@@ -1233,7 +1372,7 @@ export const getBookmarkedTasks = async (userId: string) => {
     
     // Fetch all bookmarked tasks
     const taskDocs = await Promise.all(
-      bookmarkedIds.map(taskId => getDoc(doc(db, 'tasks', taskId)))
+      bookmarkedIds.map((taskId: string) => getDoc(doc(db, 'tasks', taskId)))
     );
     
     // Filter out tasks that no longer exist and map to task objects
@@ -1326,6 +1465,185 @@ export const updateTask = async (taskId: string, taskData: Record<string, any>) 
  * @param searchQuery Die Suchanfrage (wird getrimmt und in Kleinbuchstaben umgewandelt)
  * @param category Die optionale Kategorie
  */
+/**
+ * Anfrage zum Freigeben des Standorts senden
+ * @param chatId Die Chat-ID
+ * @param userId Die Benutzer-ID des Anfragenden
+ * @returns ID der erstellten Nachricht
+ */
+export const requestLocationSharing = async (chatId: string, userId: string): Promise<string> => {
+  try {
+    // Chat überprüfen
+    const chatRef = doc(db, "chats", chatId);
+    const chatSnap = await getDoc(chatRef);
+    
+    if (!chatSnap.exists()) {
+      throw new Error("Chat nicht gefunden");
+    }
+    
+    const chatData = chatSnap.data();
+    
+    // Prüfen, ob der Benutzer ein Teilnehmer ist
+    if (!chatData.participants.includes(userId)) {
+      throw new Error("Unbefugter Zugriff auf diesen Chat");
+    }
+    
+    // Nachricht über die Anfrage hinzufügen
+    const messagesRef = collection(db, `chats/${chatId}/messages`);
+    const messageDoc = await addDoc(messagesRef, {
+      type: "location_request",
+      senderId: userId,
+      timestamp: serverTimestamp(),
+      content: "Hat eine Anfrage zur Standortfreigabe gesendet"
+    });
+    
+    // Chat aktualisieren
+    await updateDoc(chatRef, {
+      lastMessage: "Standortfreigabe angefragt",
+      lastMessageAt: serverTimestamp()
+    });
+    
+    return messageDoc.id;
+  } catch (error) {
+    console.error("Fehler beim Anfragen der Standortfreigabe:", error);
+    throw error;
+  }
+};
+
+/**
+ * Auf Standortfreigabe-Anfrage antworten
+ * @param chatId Die Chat-ID
+ * @param userId Die Benutzer-ID des Antwortenden
+ * @param approved Zustimmung (true) oder Ablehnung (false)
+ * @param taskId Die Aufgaben-ID
+ * @returns true wenn der Standort freigegeben wurde, false wenn nicht
+ */
+export const respondToLocationRequest = async (
+  chatId: string, 
+  userId: string, 
+  approved: boolean,
+  taskId: string
+): Promise<boolean> => {
+  try {
+    // Chat und Benutzerrolle überprüfen
+    const chatRef = doc(db, "chats", chatId);
+    const chatSnap = await getDoc(chatRef);
+    
+    if (!chatSnap.exists()) {
+      throw new Error("Chat nicht gefunden");
+    }
+    
+    const chatData = chatSnap.data();
+    
+    // Prüfen, ob der Benutzer ein Teilnehmer ist
+    if (!chatData.participants.includes(userId)) {
+      throw new Error("Unbefugter Zugriff auf diesen Chat");
+    }
+    
+    // Task abrufen
+    const taskRef = doc(db, "tasks", taskId);
+    const taskSnap = await getDoc(taskRef);
+    
+    if (!taskSnap.exists()) {
+      throw new Error("Aufgabe nicht gefunden");
+    }
+    
+    const taskData = taskSnap.data();
+    
+    // Bestimmen, ob Benutzer der Ersteller oder Tasker ist
+    const isCreator = taskData.creatorId === userId;
+    const isTasker = taskData.taskerId === userId;
+    
+    if (!isCreator && !isTasker) {
+      throw new Error("Benutzer ist weder Ersteller noch Ausführender der Aufgabe");
+    }
+    
+    // Antwort-Nachricht hinzufügen
+    const messagesRef = collection(db, `chats/${chatId}/messages`);
+    await addDoc(messagesRef, {
+      type: "location_response",
+      senderId: userId,
+      timestamp: serverTimestamp(),
+      approved: approved,
+      content: approved ? "Hat der Standortfreigabe zugestimmt" : "Hat die Standortfreigabe abgelehnt"
+    });
+    
+    // Lokalen chat.locationSharingStatus erstellen, falls nicht vorhanden
+    const locationSharingStatus = chatData.locationSharingStatus || {
+      creatorApproved: false,
+      taskerApproved: false,
+      sharedAt: null
+    };
+    
+    // Status aktualisieren
+    if (isCreator) {
+      locationSharingStatus.creatorApproved = approved;
+    } else if (isTasker) {
+      locationSharingStatus.taskerApproved = approved;
+    }
+    
+    // Chat-Dokument aktualisieren
+    await updateDoc(chatRef, {
+      locationSharingStatus: locationSharingStatus,
+      lastMessage: approved ? "Standortfreigabe zugestimmt" : "Standortfreigabe abgelehnt",
+      lastMessageAt: serverTimestamp()
+    });
+    
+    // Wenn beide zugestimmt haben, standort freigeben
+    const bothApproved = locationSharingStatus.creatorApproved && locationSharingStatus.taskerApproved;
+    
+    if (bothApproved && !chatData.locationSharingStatus?.sharedAt) {
+      // Automatische Systembenachrichtigung erstellen
+      await addDoc(messagesRef, {
+        type: "location_shared",
+        senderId: "system",
+        timestamp: serverTimestamp(),
+        taskId: taskId,
+        location: taskData.location
+      });
+      
+      // Standortfreigabe in Chat und Task aktualisieren
+      await updateDoc(chatRef, {
+        "locationSharingStatus.sharedAt": serverTimestamp(),
+        lastMessage: "🗺️ Standort wurde freigegeben",
+        lastMessageAt: serverTimestamp()
+      });
+      
+      // Task aktualisieren
+      await updateDoc(taskRef, {
+        "location.locationShared": true
+      });
+      
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error("Fehler beim Beantworten der Standortfreigabe:", error);
+    throw error;
+  }
+};
+
+/**
+ * Prüft, ob der genaue Standort für einen Chat freigegeben wurde
+ */
+export const isLocationSharedInChat = async (chatId: string): Promise<boolean> => {
+  try {
+    const chatRef = doc(db, "chats", chatId);
+    const chatSnap = await getDoc(chatRef);
+    
+    if (!chatSnap.exists()) {
+      return false;
+    }
+    
+    const chatData = chatSnap.data();
+    return !!(chatData.locationSharingStatus?.sharedAt);
+  } catch (error) {
+    console.error("Fehler beim Prüfen des Standortfreigabestatus:", error);
+    return false;
+  }
+};
+
 export const saveSearchQuery = async (userId: string, searchQuery: string, category?: string) => {
   if (!searchQuery || searchQuery.trim() === '') return;
   
@@ -1386,7 +1704,7 @@ export const saveSearchQuery = async (userId: string, searchQuery: string, categ
  * @param limit Anzahl der zu ladenden Suchanfragen
  * @returns Array mit den letzten Suchanfragen
  */
-export const getRecentSearches = async (userId: string, limit: number = 8) => {
+export const getRecentSearches = async (userId: string, limitParam: number = 8) => {
   try {
     console.log('Fetching recent searches for userId:', userId);
     
@@ -1400,7 +1718,7 @@ export const getRecentSearches = async (userId: string, limit: number = 8) => {
         const personalSearchQuery = query(
           searchHistoryRef,
           orderBy('timestamp', 'desc'),
-          limit(limit)
+          limit(limitParam)
         );
         
         const snapshot = await getDocs(personalSearchQuery);
@@ -1439,7 +1757,7 @@ export const getRecentSearches = async (userId: string, limit: number = 8) => {
     const trendingQuery = query(
       trendingSearchesRef,
       orderBy('timestamp', 'desc'),
-      limit(limit * 2) // Doppelte Anzahl laden, da wir später deduplizieren
+      limit(limitParam * 2) // Doppelte Anzahl laden, da wir später deduplizieren
     );
     
     const trendingSnapshot = await getDocs(trendingQuery);
@@ -1461,7 +1779,7 @@ export const getRecentSearches = async (userId: string, limit: number = 8) => {
     });
     
     // Auf das gewünschte Limit reduzieren
-    const results = Array.from(trendingSearches.values()).slice(0, limit);
+    const results = Array.from(trendingSearches.values()).slice(0, limitParam);
     console.log('Trending searches:', results);
     return results;
   } catch (error) {
@@ -1479,6 +1797,220 @@ export const getRecentSearches = async (userId: string, limit: number = 8) => {
  * @param taskId - Optional: ID des Tasks, falls bekannt
  * @returns Array mit URLs der hochgeladenen Bilder oder Base64-Strings je nach Umgebung
  */
+// Benachrichtigungstypen definieren
+export const NotificationTypes = {
+  NEW_MESSAGE: 'new_message',
+  TASK_MATCHED: 'task_matched',
+  TASK_COMPLETED: 'task_completed',
+  REVIEW_REQUIRED: 'review_required',
+  NEW_TASK_NEARBY: 'new_task_nearby',
+  APPLICATION_RECEIVED: 'application_received',
+  REVIEW_RECEIVED: 'review_received',
+  REVIEW_REMINDER: 'review_reminder'  // Neuer Typ für die Erinnerung an ausstehende Bewertungen
+};
+
+/**
+ * Erstellt eine Erinnerungsbenachrichtigung für eine ausstehende Bewertung
+ * 
+ * @param userId Die ID des Benutzers, der die Benachrichtigung erhalten soll
+ * @param taskId Die ID der Aufgabe, für die eine Bewertung aussteht
+ * @param taskTitle Der Titel der Aufgabe
+ */
+export const createReviewReminderNotification = async (
+  userId: string,
+  taskId: string,
+  taskTitle: string
+) => {
+  if (!userId || !taskId) {
+    console.error("Benutzer-ID oder Aufgaben-ID fehlt für Bewertungserinnerung");
+    return;
+  }
+
+  try {
+    // Prüfen, ob bereits eine Erinnerung für diese Aufgabe existiert
+    const notificationsRef = collection(db, "notifications");
+    const q = query(
+      notificationsRef, 
+      where("userId", "==", userId),
+      where("type", "==", NotificationTypes.REVIEW_REMINDER),
+      where("data.taskId", "==", taskId)
+    );
+    
+    const existingNotifications = await getDocs(q);
+    
+    // Nur erstellen, wenn noch keine Erinnerung existiert
+    if (existingNotifications.empty) {
+      await createNotification(userId, NotificationTypes.REVIEW_REMINDER, {
+        taskId,
+        taskTitle,
+        requiresAction: true, // Erfordert eine Aktion vom Benutzer
+        dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // 3 Tage Zeit
+      });
+      console.log("Bewertungserinnerung erstellt für Benutzer:", userId, "und Aufgabe:", taskId);
+    } else {
+      console.log("Bewertungserinnerung existiert bereits für diese Aufgabe");
+    }
+  } catch (error) {
+    console.error("Fehler beim Erstellen der Bewertungserinnerung:", error);
+  }
+};
+
+/**
+ * Benachrichtigung erstellen
+ * @param userId Empfänger-ID
+ * @param type Benachrichtigungstyp
+ * @param data Zusätzliche Daten
+ */
+export const createNotification = async (
+  userId: string,
+  type: string,
+  data: Record<string, any>
+) => {
+  try {
+    const notificationsRef = collection(db, "notifications");
+
+    await addDoc(notificationsRef, {
+      userId,
+      type,
+      data,
+      read: false,
+      acted: false, // Wurde auf die Benachrichtigung reagiert (z.B. Bewertung abgegeben)
+      createdAt: serverTimestamp(),
+      priority: (type === 'review_required' || type === 'review_reminder') ? 'high' : 'normal' // Priorisierung
+    });
+
+    // Ungelesene Benachrichtigungen zählen
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, {
+      unreadNotifications: increment(1),
+      lastNotificationAt: serverTimestamp() // Zeitstempel der letzten Benachrichtigung
+    });
+
+    console.log(`✅ Benachrichtigung erstellt für Benutzer ${userId}`);
+
+  } catch (error) {
+    console.error("❌ Fehler beim Erstellen der Benachrichtigung:", error);
+  }
+};
+
+/**
+ * Benachrichtigungen für einen Benutzer abrufen
+ */
+export const getUserNotifications = async (userId: string) => {
+  try {
+    const notificationsRef = collection(db, "notifications");
+    
+    // Einfachere Abfrage ohne orderBy, um den "failed-precondition"-Fehler zu vermeiden
+    // In der Produktionsumgebung sollte ein Index in Firebase erstellt werden
+    const q = query(
+      notificationsRef,
+      where("userId", "==", userId)
+    );
+
+    const snapshot = await getDocs(q);
+    
+    // Sortieren wir manuell nach createdAt
+    const notifications = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data() as Record<string, any>
+    }));
+    
+    // Sortieren nach createdAt (neueste zuerst)
+    return notifications.sort((a: any, b: any) => {
+      const aTime = a.createdAt?.seconds || 0;
+      const bTime = b.createdAt?.seconds || 0;
+      return bTime - aTime;
+    }).slice(0, 50); // Limitieren auf 50
+  } catch (error) {
+    console.error("Fehler beim Abrufen der Benachrichtigungen:", error);
+    return [];
+  }
+};
+
+/**
+ * Benachrichtigung als gelesen markieren
+ */
+export const markNotificationAsRead = async (notificationId: string, userId: string) => {
+  try {
+    console.log(`⏱️ Markiere Benachrichtigung ${notificationId} als gelesen`);
+    
+    // Zuerst überprüfen, ob die Benachrichtigung bereits gelesen ist
+    const notificationRef = doc(db, "notifications", notificationId);
+    const notificationSnap = await getDoc(notificationRef);
+    
+    if (!notificationSnap.exists()) {
+      console.warn(`⚠️ Benachrichtigung ${notificationId} existiert nicht`);
+      return false;
+    }
+    
+    const notificationData = notificationSnap.data();
+    if (notificationData.read) {
+      console.log(`ℹ️ Benachrichtigung ${notificationId} wurde bereits gelesen`);
+      return true;
+    }
+    
+    // Benachrichtigung als gelesen markieren
+    await updateDoc(notificationRef, {
+      read: true,
+      readAt: serverTimestamp()
+    });
+    
+    console.log(`✅ Benachrichtigung ${notificationId} als gelesen markiert`);
+    
+    // Ungelesene Benachrichtigungen zählen
+    const userRef = doc(db, "users", userId);
+    
+    // Sicherheitshalber: Prüfe, ob der Zähler > 0 ist
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) {
+      console.warn(`⚠️ Benutzer ${userId} existiert nicht`);
+      return false;
+    }
+    
+    const userData = userSnap.data();
+    const currentCount = userData.unreadNotifications || 0;
+    
+    // Nur dekrementieren, wenn der Zähler > 0 ist
+    if (currentCount > 0) {
+      await updateDoc(userRef, {
+        unreadNotifications: increment(-1),
+        lastNotificationReadAt: serverTimestamp()
+      });
+      console.log(`✅ Ungelesene Benachrichtigungen für Benutzer ${userId} reduziert (${currentCount} -> ${currentCount-1})`);
+    } else {
+      console.log(`ℹ️ Keine ungelesenen Benachrichtigungen zum Reduzieren für Benutzer ${userId}`);
+      // Setze den Zähler auf 0, um sicherzustellen, dass er nicht negativ ist
+      await updateDoc(userRef, {
+        unreadNotifications: 0,
+        lastNotificationReadAt: serverTimestamp()
+      });
+    }
+
+    return true;
+  } catch (error) {
+    console.error("❌ Fehler beim Markieren der Benachrichtigung:", error);
+    return false;
+  }
+};
+
+/**
+ * Benachrichtigung als bearbeitet markieren
+ */
+export const markNotificationAsActed = async (notificationId: string) => {
+  try {
+    const notificationRef = doc(db, "notifications", notificationId);
+    await updateDoc(notificationRef, {
+      acted: true,
+      actedAt: serverTimestamp()
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Fehler beim Markieren der Benachrichtigung:", error);
+    return false;
+  }
+};
+
 export const uploadTaskImages = async (files: File[], taskId?: string): Promise<string[]> => {
   if (!Array.isArray(files) || files.length === 0) {
     console.log("Keine Dateien zum Hochladen übergeben");
